@@ -12,7 +12,7 @@ import { DEFAULT_CUTOFF_HZ, filterPaddingSamples, lowPassZeroPhase } from "./fil
 import { assessQuality, resampleUniform, type QualityOptions, type QualityReport, type RefusalReason } from "./quality";
 import { requireFinite } from "./internal";
 import { toMetersUp } from "./scale";
-import { segmentReps, type Rep } from "./segment";
+import { MIN_PHASE_DISPLACEMENT_M, segmentReps, type Rep } from "./segment";
 
 /**
  * Judgement call: HIGH confidence needs a frame rate of at least this. The grade
@@ -31,6 +31,8 @@ export const LOW_CONFIDENCE_ABOVE_LOW_VISIBILITY = 0.05;
  * Judgement call: a pause is a run of at least this long (seconds) in which the smoothed
  * position stays within DWELL_BAND_M. It separates the movement of a rep from the rest,
  * pick-up or set-down around it. Not tuned to any one scenario; see "Rep window" below.
+ * Half of it is also the stretch over which a pause must be still (ONSET_TOLERANCE_M), so
+ * it sets the speed floor: ONSET_TOLERANCE_M / (DWELL_MIN_S / 2) = 2 cm/s.
  */
 export const DWELL_MIN_S = 0.3;
 /**
@@ -39,6 +41,8 @@ export const DWELL_MIN_S = 0.3;
  * (a few millimetres) and below the 10 cm rep threshold. It only DETECTS pauses: a run
  * stays inside this band until the movement has already travelled up to 1.5 cm, so the
  * rep boundary is not placed at the pause's edge but at the rest level (ONSET_TOLERANCE_M).
+ * It is also how closely two rest levels must agree to count as the same height when the
+ * pauses that bound a rep are chosen.
  */
 export const DWELL_BAND_M = 0.015;
 /**
@@ -46,20 +50,27 @@ export const DWELL_BAND_M = 0.015;
  * rest. It is sized to the residual noise of the smoothed signal, a few tenths of a
  * millimetre for ±2 mm input noise and about 1 mm for ±5 mm, with margin for the filter's
  * pre-ringing; it is not tuned to any scenario. The lift starts at the last pause sample
- * within this of the level, the lowering ends at the first. A min-jerk lift of 0.5 m in
+ * within this of the level, the lowering ends at the first, and the lift is over (for
+ * `liftDurationS`) at the first sample within this of the top. A min-jerk lift of 0.5 m in
  * 1 s covers 3 mm in 0.08 s, so the onset still reads a little late (about 0.6 % of that
- * range of motion is left out at each end).
+ * range of motion is left out at each end). It is also the most the still half of a pause
+ * may travel.
  */
 export const ONSET_TOLERANCE_M = 0.003;
 
 /**
  * Measured in the physics review and in this package's review, on synthetic lifts at the
- * default 4 Hz cutoff: a lift shorter than this is shaped by the filter (work and peak
- * force read low, range of motion high; see the README table). It is compared with
- * `liftDurationS`, which is measured on the TRIMMED window and so reads about 8 % under
- * the full time of a 1 s lift (the first 3 mm are left out): 0.7 s here is a lift of about 0.77 s.
+ * default 4 Hz cutoff: a lift shorter than about 0.77 s is shaped by the filter (work and
+ * peak force read low, range of motion high; see the README table). The flag compares this
+ * constant with `liftDurationS`, which leaves out the first and the last ONSET_TOLERANCE_M of
+ * the lift and so reads about 15 % under the full time of a 0.5 m lift (measured: 1.0 s reads
+ * 0.850, 0.9 s 0.767, 0.8 s 0.683, 0.75 s 0.650, 0.7 s 0.600, 0.6 s 0.517): 0.65 s here is a
+ * lift of about 0.75 s. It was 0.7 while `liftDurationS` ran from the onset to the top sample
+ * (which read 8 % under); left at 0.7 it would flag the 0.8 s lifts the README table shows
+ * are within half a percent. A shorter movement reads shorter still (3 mm is a larger share
+ * of it: 1.0 s over 0.25 m reads 0.800, over 0.15 m 0.767).
  */
-export const FILTER_LIMITED_LIFT_S = 0.7;
+export const FILTER_LIMITED_LIFT_S = 0.65;
 
 /**
  * False until the pipeline has been checked against real video (a tape-measured rep, a
@@ -84,10 +95,23 @@ export interface SessionOptions extends QualityOptions {
 export interface RepResult {
   startS: number; // seconds from the first frame of the recording to the movement onset (where the position leaves the rest level before the lift)
   durationS: number; // movement onset to movement offset (where the position reaches the rest level after the lowering)
-  liftDurationS: number; // movement onset to the top, the turnaround the segmenter found
+  /**
+   * Movement onset to the first sample within ONSET_TOLERANCE_M of the top's level: the lift alone, without
+   * any pause at the top. (The top itself is the highest sample of the plateau, which noise places anywhere
+   * in a pause.) It leaves out 3 mm at each end, so a 1 s lift of 0.5 m reads 0.85 s.
+   */
+  liftDurationS: number;
   /** True when liftDurationS is under FILTER_LIMITED_LIFT_S: the 4 Hz default cutoff shapes a lift this fast, so work and peak force read low. */
   filterLimited: boolean;
   rangeOfMotionM: number; // height of the lift, smoothed top minus smoothed onset
+  /**
+   * How much of the movement the segmenter detected was measured: rangeOfMotionM divided by the segmenter's
+   * range for this rep (its top minus the lower of its two ends). About 1 for a rep between two rests at the
+   * same height; 0.45 for a 0.5 m curl that followed a 0.6 m pick-up from the floor (the pick-up is rightly
+   * left out); low also when slow movement was taken for rest. No threshold and no flag: the number is the
+   * information.
+   */
+  trimmedRangeFraction: number;
   positiveWorkJ: number;
   negativeWorkJ: number; // <= 0
   peakForceN: number;
@@ -150,98 +174,184 @@ function median(y: readonly number[], from: number, to: number): number {
   return sorted.length % 2 === 1 ? (sorted[mid] as number) : ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2;
 }
 
+/** A pause that may bound a rep: the sample the boundary goes at, and the rest level it was placed by. */
+interface Boundary {
+  index: number;
+  level: number;
+}
+
 /**
- * The pause is y[last - run + 1 .. last] and the lift starts after it. Its rest level is the median of its
- * first half, which the coming lift has not reached; the lift starts at the last sample of the pause within
- * ONSET_TOLERANCE_M of that level. If no sample is that close (a level between two samples that are further
- * apart than the tolerance, which a pause that follows a movement at once can produce) the old boundary, the
- * pause's last sample, stays.
+ * The pause y[last - run + 1 .. last] as the start of a lift, or null if it cannot be one. Its rest level is the
+ * median of its first half, which the coming lift has not reached. It qualifies only if that level is at or
+ * below `ceiling` (the pause lies below the movement, not on its top plateau) and the first half is actually
+ * at rest (net travel within ONSET_TOLERANCE_M: slow movement fits inside DWELL_BAND_M for DWELL_MIN_S without
+ * being a rest). The boundary is the last sample of the pause within ONSET_TOLERANCE_M of the level; if none
+ * is that close (a level between two samples further apart than the tolerance) it is the pause's last sample.
  */
-function onsetAtRest(y: readonly number[], last: number, run: number): number {
+function onsetCandidate(y: readonly number[], last: number, run: number, ceiling: number): Boundary | null {
   const first = last - run + 1;
-  const level = median(y, first, first + (run >> 1) - 1);
-  for (let i = last; i >= first; i--) if (Math.abs((y[i] as number) - level) <= ONSET_TOLERANCE_M) return i;
-  return last;
+  if (first < 0 || !isPause(y, first, last)) return null;
+  const halfEnd = first + (run >> 1) - 1;
+  const level = median(y, first, halfEnd);
+  if (level > ceiling) return null;
+  if (Math.abs((y[halfEnd] as number) - (y[first] as number)) > ONSET_TOLERANCE_M) return null;
+  for (let i = last; i >= first; i--) if (Math.abs((y[i] as number) - level) <= ONSET_TOLERANCE_M) return { index: i, level };
+  return { index: last, level };
 }
 
-/** Mirror image of onsetAtRest: the pause is y[first .. first + run - 1], its level is the median of its SECOND half, and the lowering ends at its first sample within ONSET_TOLERANCE_M of that level (else the old boundary, `first`, stays). */
-function offsetAtRest(y: readonly number[], first: number, run: number): number {
+/** Mirror image of onsetCandidate: the pause is y[first .. first + run - 1], its level and its rest test use its SECOND half, and the lowering ends at its first sample within ONSET_TOLERANCE_M of the level (else at `first`). */
+function offsetCandidate(y: readonly number[], first: number, run: number, ceiling: number): Boundary | null {
   const last = first + run - 1;
-  const level = median(y, last - (run >> 1) + 1, last);
-  for (let i = first; i <= last; i++) if (Math.abs((y[i] as number) - level) <= ONSET_TOLERANCE_M) return i;
-  return first;
+  if (last >= y.length || !isPause(y, first, last)) return null;
+  const halfStart = last - (run >> 1) + 1;
+  const level = median(y, halfStart, last);
+  if (level > ceiling) return null;
+  if (Math.abs((y[last] as number) - (y[halfStart] as number)) > ONSET_TOLERANCE_M) return null;
+  for (let i = first; i <= last; i++) if (Math.abs((y[i] as number) - level) <= ONSET_TOLERANCE_M) return { index: i, level };
+  return { index: first, level };
+}
+
+/** First position in `sorted` (ascending) whose value is >= x. */
+function lowerBound(sorted: readonly number[], x: number): number {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if ((sorted[mid] as number) < x) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
 }
 
 /**
- * Rep window. segmentReps cuts a rep minimum to minimum, which puts the whole rest
- * before it, the pick-up, or the set-down after it, into the rep: noise rectifies into
- * work during a rest, and carrying a weight off the floor is not a repetition. Each rep
- * is therefore trimmed to its movement, on the SMOOTHED position (the band is applied to
- * the filtered trace, so noise does not make a pause look shorter than it is):
+ * The pair of pauses that bounds the rep. `onsets` and `offsets` are not empty.
  *
- *  - Onset. Walk back from the top. First step over the top plateau (every sample within
- *    DWELL_BAND_M of the top), so a pause AT the top is never taken for the pause before
- *    the lift: the lift ends at the turnaround the segmenter found and the lowering
- *    starts there. Then take the latest pause (a run of DWELL_MIN_S within DWELL_BAND_M)
- *    that ends at or after the segmenter's start. A pause half-way up (rack to shoulders,
- *    then press) is such a pause, so the press starts where it ends.
- *  - Offset. Walk forward from the top, over the top plateau, to the first pause that
- *    starts at or before the segmenter's end.
- *  - Where in the pause the boundary goes. DWELL_BAND_M only detects the pause: a run
- *    stays inside the band until the movement has already travelled up to 1.5 cm, so the
- *    pause's last (first) sample is up to 1.5 cm into the lift (lowering), and putting the
- *    boundary there systematically cost a rep its first and last centimetres (work -3.2 %,
- *    range of motion -2.6 % for 0.5 m, twice that for 0.25 m). The boundary is placed at
- *    the rest level instead. The level is the median of the half of the pause the movement
- *    has not reached (the first half before a lift, the second half after a lowering); the
- *    lift starts at the last pause sample within ONSET_TOLERANCE_M of it, the lowering ends
- *    at the first. The boundary can only fall between the true rest and the pause's edge
- *    (the old boundary), so a level contaminated by the movement (a pause that follows a
- *    movement at once, a lift slow enough to begin inside the window) leaves the boundary
- *    no further from the truth than the edge was. Checked over 558 reps (lifts of 0.6 to
- *    4 s, rests of 0 to 3 s, noise to ±5 mm, heights of 0.15 to 0.5 m, racks with 0.35 s
- *    pauses): no rep's work or range of motion error grew by more than 0.05 points, bar
- *    one whose -0.5 % range of motion became +0.8 % by the filter's pre-ringing. A guard
- *    that kept the edge whenever the half of the pause was not flat was tried and
- *    removed: it only fired where the refined boundary was better (reps with no rest
- *    between them: work -3.2 % with the guard, -0.9 % without). If no pause sample is
- *    within the tolerance of the level, the edge sample stays.
- *  - A pause may reach outside the segmenter's rep (a rest is split at its lowest sample,
- *    so part of it lies in the neighbouring rep), but the onset is never before the
- *    segmenter's start nor the offset after its end.
- *  - No pause found (reps with no rest between them): the segmenter's boundary is kept,
- *    which is where the two reps meet. A movement under the rep threshold that is NOT
- *    separated from a rep by a pause (it follows the lowering at once) stays in that
- *    rep; one with a pause either side is attributed to neither.
+ * The best agreement is the smallest difference between an onset level and an offset level. Every pair
+ * whose levels differ by no more than that plus DWELL_BAND_M agrees as well as the best one can be told to
+ * (see "Rep window"), and of those the smallest window wins: the latest onset with the earliest offset.
  *
- * Residual bias: the first and last ONSET_TOLERANCE_M of the movement are judged rest,
- * about ONSET_TOLERANCE_M / ROM of the range of motion (0.6 % for 0.5 m) and a smaller
- * share of the work; see the README for the measured values. A pause of DWELL_MIN_S or
- * more inside a lift splits it: only the part after the last such pause is measured.
+ * A long rest holds thousands of candidates on each side, so the pairs are not enumerated: the offsets are
+ * sorted by level, and a minimum-tree over that order answers "earliest offset whose level is within the
+ * tolerance of this onset's" in O(log n).
  */
-function trimmedWindow(y: readonly number[], rep: Rep, rateHz: number): { onset: number; offset: number } {
+function matchLevels(onsets: readonly Boundary[], offsets: readonly Boundary[]): { onset: number; offset: number } {
+  const byLevel = [...offsets].sort((p, q) => p.level - q.level);
+  const levels = byLevel.map((c) => c.level);
+  const n = byLevel.length;
+  // tree[n + k] is the sample index of the k-th offset by level; tree[k] the smaller of its two children
+  const tree: number[] = new Array<number>(2 * n).fill(Number.POSITIVE_INFINITY);
+  for (let k = 0; k < n; k++) tree[n + k] = (byLevel[k] as Boundary).index;
+  for (let k = n - 1; k >= 1; k--) tree[k] = Math.min(tree[2 * k] as number, tree[2 * k + 1] as number);
+  /** Earliest offset among positions [from, to) of the level order. */
+  const earliest = (from: number, to: number): number => {
+    let min = Number.POSITIVE_INFINITY;
+    for (let l = from + n, r = to + n; l < r; l >>= 1, r >>= 1) {
+      if (l & 1) min = Math.min(min, tree[l++] as number);
+      if (r & 1) min = Math.min(min, tree[--r] as number);
+    }
+    return min;
+  };
+
+  let best = Number.POSITIVE_INFINITY;
+  for (const a of onsets) {
+    const k = lowerBound(levels, a.level);
+    if (k < n) best = Math.min(best, (levels[k] as number) - a.level);
+    if (k > 0) best = Math.min(best, a.level - (levels[k - 1] as number));
+  }
+
+  const tolerance = best + DWELL_BAND_M;
+  let onset = (onsets[0] as Boundary).index;
+  let offset = (offsets[0] as Boundary).index;
+  let span = Number.POSITIVE_INFINITY;
+  for (const a of onsets) {
+    // onsets come innermost first, so on equal spans the latest onset is kept
+    const end = earliest(lowerBound(levels, a.level - tolerance), lowerBound(levels, a.level + tolerance));
+    if (end - a.index < span) {
+      span = end - a.index;
+      onset = a.index;
+      offset = end;
+    }
+  }
+  return { onset, offset };
+}
+
+/**
+ * Rep window. segmentReps cuts a rep minimum to minimum, which puts the whole rest before it, the pick-up, or
+ * the set-down after it, into the rep: noise rectifies into work during a rest, and carrying a weight off the
+ * floor is not a repetition. Each rep is therefore trimmed to its movement, on the SMOOTHED position, between
+ * two pauses: one before the top (where the lift starts) and one after it (where the lowering ends).
+ *
+ * What a pause is. A run of DWELL_MIN_S in which the position stays within DWELL_BAND_M, that
+ *  1. lies below the movement: its rest level is at least `minPhaseDisplacementM` under the rep's top, the
+ *     threshold the segmenter uses to call something a phase. A pause AT the top is therefore never a
+ *     boundary, however long, and neither is any stretch of the last 10 cm under the top;
+ *  2. is actually at rest: the half of it away from the movement (the first half before a lift, the second
+ *     half after a lowering) has a net travel of at most ONSET_TOLERANCE_M. A lift slower than about 5 cm/s
+ *     stays within DWELL_BAND_M for DWELL_MIN_S anywhere along its way, and without this test the whole of a
+ *     slow rep but its last centimetres was read as a rest (work -84 to -96 %).
+ * Every window that qualifies is a candidate: those ending between the segmenter's start and the top for the
+ * onset, those starting between the top and the segmenter's end for the offset. A window may reach outside
+ * the segmenter's rep (a rest is split at its lowest sample, so part of it lies in the neighbouring rep), but
+ * the onset is never before the segmenter's start nor the offset after its end.
+ *
+ * Which pauses. A rep starts from and returns to roughly the same height, so the onset and the offset are
+ * the pair of candidates whose REST LEVELS AGREE (matchLevels). A sticking point half-way up has no pause at
+ * its height on the way down, so the rests at the bottom win and the rep is whole; racking the weight at the
+ * shoulders is matched by the return to the shoulders, so the press is the rep and the clean is not; a
+ * pick-up from the floor followed by a pause is matched by the return to that pause's height. A rep that
+ * does not come back to where it started has one height on each side and uses them.
+ *  - Agreement is judged to DWELL_BAND_M. The best pair is the one with the smallest level difference; all
+ *    pairs within DWELL_BAND_M of it count as agreeing equally, and of those the smallest window wins
+ *    (latest onset, earliest offset). Exact minimisation does not work: the levels inside one rest differ by
+ *    fractions of a millimetre (noise, filter ringing), so the exact minimum falls on an arbitrary window
+ *    deep inside the rests and bills them to the rep (measured: start up to 9.5 s early with 10 s rests,
+ *    work +7.8 % at +-2 mm). A tolerance of ONSET_TOLERANCE_M cured that but not a hand that drifts during
+ *    the rest: one that rises 2 cm while resting and comes back 1 cm low has an exact match 2 s inside the
+ *    rest (start 1.9 to 2.3 s early, a 1 s lift reported as 3.2 s). Two rests within the band that defines
+ *    a pause are the same height as far as this rule can tell.
+ *  - One side without a candidate (reps with no rest between them, a lowering that runs straight into the
+ *    set-down): the segmenter's boundary on that side, the innermost candidate on the other. Neither side:
+ *    the segmenter's rep.
+ *
+ * Where in the pause the boundary goes. DWELL_BAND_M only detects the pause: a run stays inside the band
+ * until the movement has already travelled up to 1.5 cm, and a boundary at the pause's edge cost a rep its
+ * first and last centimetres (work -3.2 %, range of motion -2.6 % for 0.5 m). The boundary is the last
+ * (first) sample of the pause within ONSET_TOLERANCE_M of its rest level, the median of its level half.
+ *
+ * Known failure modes (each measured, see the README):
+ *  - Speed floor. Movement slower than ONSET_TOLERANCE_M per half of DWELL_MIN_S (2 cm/s) IS a rest to
+ *    test 2, and position noise moves that to about 3 cm/s. The slow first and last centimetres of a slow
+ *    rep are trimmed with the rests, more with noise; constant-speed movement at or under the floor collapses
+ *    to the last `minPhaseDisplacementM` under the top. `trimmedRangeFraction` shows it.
+ *  - A stop on the way up AND one at the same height on the way down is a rack to this rule: only the part
+ *    above them is measured.
+ *  - A stop on the way up in a rep that does not return to its start height wins if it is nearer the return
+ *    height than the start is.
+ *  - No pause before the set-down, or after the pick-up: nothing separates them from the rep, and the
+ *    floor-to-top movement is billed to it.
+ *  - A movement under the rep threshold that is NOT separated from a rep by a pause stays in that rep; one
+ *    with a pause either side is attributed to neither.
+ */
+function trimmedWindow(y: readonly number[], rep: Rep, rateHz: number, minPhaseDisplacementM: number): { onset: number; offset: number } {
   const run = Math.max(2, Math.round(DWELL_MIN_S * rateHz) + 1); // samples in a pause: first to last spans DWELL_MIN_S
-  const topY = y[rep.topIndex] as number;
+  const ceiling = (y[rep.topIndex] as number) - minPhaseDisplacementM;
 
-  let beforeTop = rep.topIndex;
-  while (beforeTop > rep.startIndex && (y[beforeTop] as number) >= topY - DWELL_BAND_M) beforeTop--;
+  const onsets: Boundary[] = []; // innermost (latest) first
+  for (let last = rep.topIndex; last >= rep.startIndex; last--) {
+    const c = onsetCandidate(y, last, run, ceiling);
+    if (c !== null) onsets.push({ index: Math.max(c.index, rep.startIndex), level: c.level });
+  }
+  const offsets: Boundary[] = []; // innermost (earliest) first
+  for (let first = rep.topIndex; first <= rep.endIndex; first++) {
+    const c = offsetCandidate(y, first, run, ceiling);
+    if (c !== null) offsets.push({ index: Math.min(c.index, rep.endIndex), level: c.level });
+  }
+
   let onset = rep.startIndex;
-  for (let last = beforeTop; last >= rep.startIndex; last--) {
-    if (last - run + 1 >= 0 && isPause(y, last - run + 1, last)) {
-      onset = Math.max(onsetAtRest(y, last, run), rep.startIndex);
-      break;
-    }
-  }
-
-  let afterTop = rep.topIndex;
-  while (afterTop < rep.endIndex && (y[afterTop] as number) >= topY - DWELL_BAND_M) afterTop++;
   let offset = rep.endIndex;
-  for (let first = afterTop; first <= rep.endIndex; first++) {
-    if (first + run - 1 < y.length && isPause(y, first, first + run - 1)) {
-      offset = Math.min(offsetAtRest(y, first, run), rep.endIndex);
-      break;
-    }
-  }
+  if (onsets.length > 0 && offsets.length > 0) ({ onset, offset } = matchLevels(onsets, offsets));
+  else if (onsets.length > 0) onset = (onsets[0] as Boundary).index;
+  else if (offsets.length > 0) offset = (offsets[0] as Boundary).index;
 
   if (!(onset < rep.topIndex && rep.topIndex < offset && offset - onset >= 2)) {
     return { onset: rep.startIndex, offset: rep.endIndex };
@@ -287,19 +397,25 @@ export function analyzeSession(frames: readonly PoseFrame[], options: SessionOpt
   // startS counts from the first frame that has a usable timestamp, so a clock that does not start at 0 changes nothing.
   const t0 = (frames.find((f) => Number.isFinite(f.tS)) as PoseFrame).tS;
 
-  const reps: RepResult[] = segmentReps(smoothed, options.minPhaseDisplacementM).map((rep) => {
-    const { onset, offset } = trimmedWindow(smoothed, rep, grid.rateHz);
+  const minPhaseDisplacementM = options.minPhaseDisplacementM ?? MIN_PHASE_DISPLACEMENT_M;
+  const reps: RepResult[] = segmentReps(smoothed, minPhaseDisplacementM).map((rep) => {
+    const { onset, offset } = trimmedWindow(smoothed, rep, grid.rateHz, minPhaseDisplacementM);
     const window = samples.slice(onset, offset + 1);
     const work = trajectoryWork(window, options.massKg, options.gEnvMs2, { deviceForceN: options.deviceForceN ?? 0 });
     const start = samples[onset] as { tS: number; yM: number };
     const top = samples[rep.topIndex] as { tS: number; yM: number };
     const end = samples[offset] as { tS: number; yM: number };
+    let liftEnd = onset;
+    while (liftEnd < rep.topIndex && (smoothed[liftEnd] as number) < top.yM - ONSET_TOLERANCE_M) liftEnd++;
+    const liftDurationS = (samples[liftEnd] as { tS: number }).tS - start.tS;
+    const segmenterRangeM = top.yM - Math.min(smoothed[rep.startIndex] as number, smoothed[rep.endIndex] as number);
     return {
       startS: start.tS - t0,
       durationS: end.tS - start.tS,
-      liftDurationS: top.tS - start.tS,
-      filterLimited: top.tS - start.tS < FILTER_LIMITED_LIFT_S,
+      liftDurationS,
+      filterLimited: liftDurationS < FILTER_LIMITED_LIFT_S,
       rangeOfMotionM: top.yM - start.yM,
+      trimmedRangeFraction: (top.yM - start.yM) / segmenterRangeM,
       positiveWorkJ: work.positiveWorkJ,
       negativeWorkJ: work.negativeWorkJ,
       peakForceN: work.peakForceN,

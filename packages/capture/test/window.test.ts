@@ -211,10 +211,10 @@ describe("turnarounds", () => {
     });
   });
 
-  it("reports the lift and the whole rep separately: liftDurationS is start to top", () => {
+  it("reports the lift and the whole rep separately: liftDurationS is the lift alone", () => {
     const r = analyze(legSession({ legs: repLegs(3, 0.5, 1, 1.5, 3) }));
     for (const rep of r.reps) {
-      expect(Math.abs(rep.liftDurationS - 1)).toBeLessThan(0.15); // measured 0.92
+      expect(Math.abs(rep.liftDurationS - 0.85)).toBeLessThan(0.02); // measured 0.850: the lift ends 3 mm under the top (it was 0.917 to the top sample)
       expect(Math.abs(rep.durationS - 2.5)).toBeLessThan(0.3); // measured 2.30: 3 mm at each end count as rest, and the 1.5 s lowering takes longer to cover them
       expect(rep.liftDurationS).toBeLessThan(rep.durationS);
     }

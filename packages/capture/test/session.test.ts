@@ -262,7 +262,7 @@ describe("analyzeSession: confidence", () => {
 
 describe("analyzeSession: filterLimited", () => {
   it("is true for a 0.4 s lift, which the 4 Hz default cutoff cannot resolve, and false for a 1.0 s lift", () => {
-    expect(FILTER_LIMITED_LIFT_S).toBe(0.7);
+    expect(FILTER_LIMITED_LIFT_S).toBe(0.65);
     const fast = ok(analyze(legSession({ legs: repLegs(3, 0.5, 0.4, 0.4, 1) })));
     expect(fast.reps).toHaveLength(3);
     for (const rep of fast.reps) {
