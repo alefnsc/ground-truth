@@ -68,7 +68,7 @@ not here) must produce:
 | 3 | `toMetersUp` | The one place where image coordinates (y down) become metres (y up): `yM = −wristY · metersPerUnit`, first sample 0. |
 | 4 | `lowPassZeroPhase` | 2nd-order Butterworth, forward then backward, 4 Hz by default. A recording not longer than the filter's padding is refused `TOO_SHORT`. |
 | 5 | `segmentReps` | Displacement hysteresis on position extrema. |
-| 6 | rep window | Each rep is trimmed to its movement: onset at the end of the last pause before the top, offset at the start of the first pause after it. |
+| 6 | rep window | Each rep is trimmed to its movement: pauses are detected, and the lift starts where the position leaves the pause's rest level, the lowering ends where it reaches the next pause's rest level. |
 | 7 | `trajectoryWork` | Per trimmed rep, from `@ground-truth/physics`, with the optional constant device force. |
 
 ### Refusal reasons and thresholds
@@ -124,30 +124,49 @@ it is):
 
 1. A *pause* is a run of at least `DWELL_MIN_S` = 0.3 s in which the smoothed position
    spreads (highest minus lowest) no more than `DWELL_BAND_M` = 1.5 cm. Both are judgement
-   calls and are not tuned to any scenario.
+   calls and are not tuned to any scenario. They only *detect* a pause: a run stays inside
+   the band until the movement has already travelled up to 1.5 cm, so the pause's edge
+   is not where the movement starts.
 2. **Onset.** Walk back from the top, first stepping over the top plateau (every sample
    within 1.5 cm of the top), so a pause *at* the top is never mistaken for the pause
-   before the lift. The lift starts at the last sample of the latest pause before that.
+   before the lift. Take the latest pause before that. Its **rest level** is the median
+   of the first half of its samples, which the coming lift has not reached; the lift
+   starts at the last sample of the pause within `ONSET_TOLERANCE_M` = 3 mm of that level.
    A pause half-way up (a barbell racked at the shoulders, then pressed) counts: the
-   press starts where it ends.
-3. **Offset.** Walk forward from the top, over the top plateau, to the first pause; the
-   lowering ends at its first sample. A pause at the top stays *inside* the window
-   (between the lift and the lowering); nothing is cut there.
+   press starts where it leaves that level.
+3. **Offset.** Walk forward from the top, over the top plateau, to the first pause. Its
+   rest level is the median of the *second* half of its samples; the lowering ends at the
+   first sample of the pause within `ONSET_TOLERANCE_M` of that level. A pause at the top
+   stays *inside* the window (between the lift and the lowering); nothing is cut there.
 4. If there is no pause (reps with no rest between them) the segmenter's boundary is kept.
 5. Work, peak force, impulse, path length, `startS`, `durationS`, `liftDurationS` and
    `rangeOfMotionM` are all computed on the trimmed window. `liftDurationS` is onset to
    top; `durationS` is onset to offset.
 
+`ONSET_TOLERANCE_M` is a judgement call sized to the residual noise of the smoothed
+signal (a few tenths of a millimetre for ±2 mm input noise, about 1 mm for ±5 mm); it was
+not tuned to any test. Because the boundary can only fall between the true rest and the
+pause's edge, a pause that is contaminated by the movement (it follows a movement at once,
+or the lift is slow enough to begin inside the window) leaves the boundary no worse than
+the edge was; over 558 reps of lifts of 0.6 to 4 s, rests of 0 to 3 s, noise to ±5 mm and
+heights of 0.15 to 0.5 m, no rep's work or range-of-motion error grew by more than 0.05
+points, bar one whose range of motion went from −0.5 % to +0.8 % by the filter's
+pre-ringing. If no sample of the pause is within the tolerance of its level, the pause's
+edge sample is used; this never happened in the test suite or in that sweep.
+
 **Residual bias, measured by the tests on synthetic sessions** (0.5 m, 1 s minimum-jerk
-lift, 1 s lowering): the pause claims the first and last 1.5 cm of the movement, which a
-minimum-jerk lift takes 0.14 s to cover. So work and range of motion read about
-`DWELL_BAND_M / ROM` short (**work −3.2 %, range of motion −2.6 %** at 0.5 m; the same
-band is 7.5 % of a 0.2 m movement), `startS` reads **0.13 to 0.15 s late**, and
-`durationS` **0.27 to 0.30 s short** for a 2 s rep (the time error grows with the lift:
-it is about 0.14 × each leg's duration). The plan's target of 0.15 s on both timings is
-not met with these constants; the tests assert the measured worst case (0.2 s and
-0.35 s) rather than tuning them away. A real lift is not minimum-jerk, so these are the
-bias of the method on an idealised profile, not a prediction.
+lift, 1 s lowering): the first and last `ONSET_TOLERANCE_M` of the movement are judged
+rest, which a minimum-jerk lift takes 0.08 s to cover. So range of motion reads about
+`ONSET_TOLERANCE_M / ROM` short and work a little more (**work −0.5 %, range of motion
+−0.4 %** at 0.5 m; −0.8 % and −0.7 % at 0.25 m, so it no longer grows as the movement
+gets shorter), `startS` reads **0.07 to 0.10 s late**, and `durationS` **0.10 to 0.18 s
+short** for a 2 s rep. The time error grows with the lift (a slower lift takes longer to
+cover 3 mm: about 0.5 s late at the start of a 4 s lift) and is the one place the finding's
+0.15 s is not met: `durationS` is two such errors, and the tests assert 0.2 s. While the
+boundary sat at the pause's edge (1.5 cm) these were work −3.2 %, range of motion −2.6 %
+(7.5 % of a 0.2 m movement), 0.13 to 0.15 s late and 0.27 to 0.30 s short. A real lift is
+not minimum-jerk, so these are the bias of the method on an idealised profile, not a
+prediction.
 
 Limits of the trimming, by design or by measurement:
 
@@ -160,7 +179,9 @@ Limits of the trimming, by design or by measurement:
   pause is measured (that is what lets the rack-to-shoulders press work, and what costs a
   sticking-point pause its first half).
 - The junction between two reps with no rest is borderline for a pause when a lift is
-  about 1 s (the position is within 1.5 cm for 0.29 s). Either result is within the same
+  about 1 s (the position is within 1.5 cm for 0.29 s). When it is taken for one, the
+  boundary falls between the movement and the edge (middle rep: work −0.9 %, start 0.10 s
+  late); otherwise the segmenter's boundary is kept. Either result is within the same
   band of error.
 - A top that **drifts** down slowly (a few cm over a second) leaves no plateau to step
   over, so the lowering can be cut short.
@@ -190,7 +211,9 @@ The default cutoff is 4 Hz at the **−6 dB point of the two-pass filter** (gain
 0.8 s or slower; a faster lift is shaped by the filter. Each rep reports
 `filterLimited: true` when `liftDurationS` is under `FILTER_LIMITED_LIFT_S` = 0.7 s
 (measured in review). `liftDurationS` is taken on the trimmed window, so it reads about
-14 % under a lift's full time: 0.7 s here is a lift of about 0.8 s.
+8 % under a 1 s lift's full time (0.92 s; 6 % under at 0.6 s): 0.7 s here is a lift of
+about 0.77 s. (Trimmed at the pause's edge it read 14 % under, and 0.7 s was a lift of
+about 0.8 s.)
 
 Filter bias on a 0.5 m lift with zero noise at 60 Hz, 4 Hz cutoff, **measured in review
 on synthetic signals, before the rep window was trimmed** (signed, against the rep's
@@ -212,17 +235,20 @@ few tenths of a percent for a ~1 s lift (+0.27 %), and 0.94 % and 1.99 % at 0.6 
 0.4 s.
 
 The same lifts after the window trim, measured by the tests' scenarios against a 2000 Hz
-reference of the same rep (the −3 % is the window residual above, not the filter):
+reference of the same rep (the 1.0 s row's −0.5 % is the window residual above, not the
+filter):
 
 | Lift time | Work | Peak force | Range of motion |
 |---|---|---|---|
-| 1.0 s | −3.15 % | −0.01 % | −2.55 % |
-| 0.8 s | −3.17 % | −0.37 % | −2.30 % |
-| 0.6 s | −3.32 % | −1.98 % | −1.89 % |
-| 0.4 s | −9.69 % | −10.51 % | +0.18 % |
+| 1.0 s | −0.46 % | −0.01 % | −0.37 % |
+| 0.8 s | −0.41 % | −0.37 % | −0.26 % |
+| 0.6 s | +0.34 % | −1.98 % | +0.47 % |
+| 0.4 s | −8.21 % | −10.51 % | +1.19 % |
 
-The 0.4 s row is pinned by a test (work −9.7 % and peak −10.5 %, each ±1 point), which
-also pins the default cutoff at 4 Hz.
+The 0.4 s row is pinned by a test (work −8.2 % and peak −10.5 %, each ±1 point), which
+also pins the default cutoff at 4 Hz. (With the boundary at the pause's edge the
+rows read −3.15, −3.17, −3.32 and −9.69 % work, and −2.55, −2.30, −1.89 and +0.18 %
+range of motion.)
 
 ## Measured errors (synthetic, not real video)
 
@@ -233,45 +259,47 @@ gravity, positions with uniform ±noise from a seeded generator (`test/helpers.t
 The pose model, a real camera and a real arm are not in the loop, so these are lower
 bounds on what real video will do. Truth per rep: positive work 49.05 J, peak force
 126.97 N, range of motion 0.5 m. Errors are the largest over the reps (and seeds) of the
-session, signed as measured minus truth. This table was regenerated after the rep window
-was trimmed; the first version of the package, whose windows ran minimum to minimum, read
-work +0.4 to +0.9 % in the first rows.
+session, signed as measured minus truth. This table was regenerated after the rep
+boundary was moved from the pause's edge to the rest level (the work and range-of-motion
+columns read −3 % and −2.6 % before; peak force did not move); the first version of the
+package, whose windows ran minimum to minimum, read work +0.4 to +0.9 % in the first rows.
 
 | Scenario | Reps | Work | Peak force | Range of motion | Confidence (uncapped) |
 |---|---|---|---|---|---|
-| 60 Hz, no noise | 3 | −3.15 % | −0.01 % | −2.55 % | MEDIUM (HIGH) |
-| 60 Hz, ±2 mm (seed 1) | 3 | −3.16 % | +1.26 % | −2.58 % | MEDIUM (HIGH) |
-| 60 Hz, ±2 mm (five seeds, worst) | 3 | −3.37 % | +2.58 % | −2.79 % | MEDIUM (HIGH) |
-| 30 Hz, ±2 mm | 3 | −2.28 % | +2.02 % | −1.88 % | MEDIUM (MEDIUM) |
-| 60 Hz, ±5 mm (seed 1) | 3 | −3.19 % | +3.42 % | −2.45 % | MEDIUM (HIGH) |
-| 60 Hz, ±5 mm (seed 2) | 3 | −3.02 % | +6.71 % | −2.44 % | MEDIUM (HIGH) |
-| 60 Hz, ±2 mm, 4 % of frames lost | 3 | −3.16 % | +1.46 % | −2.58 % | MEDIUM (MEDIUM) |
-| 5 reps, ±2 mm (seeds 3, 17, 99; worst) | 5, 5, 5 | −3.37 % | +2.34 % | −2.79 % | MEDIUM (HIGH) |
-| 5 s rests, ±2 mm (seeds 1–3, worst) | 3 | −3.27 % | +2.77 % | −2.71 % | MEDIUM (HIGH) |
-| 5 s rests, ±5 mm (seeds 1–3, worst) | 3 | −3.40 % | +6.94 % | −2.75 % | MEDIUM (HIGH) |
-| 10 s rests, ±2 mm (seeds 1–3, worst) | 3 | −3.41 % | +1.45 % | −2.78 % | MEDIUM (HIGH) |
-| 10 s rests, ±5 mm (seeds 1–3, worst) | 3 | −3.59 % | +4.22 % | −2.92 % | MEDIUM (HIGH) |
-| Floor pick-up, pause, 3 curls, set-down, ±2 mm | 3 | −3.18 % | +2.07 % | −2.56 % | MEDIUM (HIGH) |
-| Rack to shoulders, 2 presses, un-rack, ±2 mm | 2 | −3.12 % | +1.58 % | −2.56 % | MEDIUM (HIGH) |
-| 0.08 m partial between 2 reps, ±2 mm | 2 | −3.18 % | +1.20 % | −2.56 % | MEDIUM (HIGH) |
-| ISS, 1000 N device force, ±2 mm (vs 500 J, 1028.9 N) | 3 | −2.64 % | +0.16 % | −2.58 % | MEDIUM (HIGH) |
-| Scale 3 % too large, no noise | 3 | −0.26 % | +0.67 % | +0.37 % | MEDIUM (HIGH) |
-| Scale 3 % too large, ±2 mm | 3 | +0.67 % | +1.98 % | +1.10 % | MEDIUM (HIGH) |
+| 60 Hz, no noise | 3 | −0.46 % | −0.01 % | −0.37 % | MEDIUM (HIGH) |
+| 60 Hz, ±2 mm (seed 1) | 3 | −0.47 % | +1.26 % | −0.36 % | MEDIUM (HIGH) |
+| 60 Hz, ±2 mm (five seeds, worst) | 3 | −0.73 % | +2.58 % | −0.65 % | MEDIUM (HIGH) |
+| 30 Hz, ±2 mm | 3 | −0.36 % | +2.02 % | −0.33 % | MEDIUM (MEDIUM) |
+| 60 Hz, ±5 mm (seed 1) | 3 | −0.66 % | +3.42 % | −0.53 % | MEDIUM (HIGH) |
+| 60 Hz, ±5 mm (seed 2) | 3 | −0.42 % | +6.71 % | −0.35 % | MEDIUM (HIGH) |
+| 60 Hz, ±2 mm, 4 % of frames lost | 3 | −0.47 % | +1.46 % | −0.36 % | MEDIUM (MEDIUM) |
+| 5 reps, ±2 mm (seeds 3, 17, 99; worst) | 5, 5, 5 | −0.73 % | +2.34 % | −0.65 % | MEDIUM (HIGH) |
+| 5 s rests, ±2 mm (seeds 1–3, worst) | 3 | −0.44 % | +2.77 % | −0.34 % | MEDIUM (HIGH) |
+| 5 s rests, ±5 mm (seeds 1–3, worst) | 3 | −0.69 % | +6.94 % | −0.53 % | MEDIUM (HIGH) |
+| 10 s rests, ±2 mm (seeds 1–3, worst) | 3 | −0.60 % | +1.45 % | −0.53 % | MEDIUM (HIGH) |
+| 10 s rests, ±5 mm (seeds 1–3, worst) | 3 | −0.82 % | +4.22 % | −0.76 % | MEDIUM (HIGH) |
+| Floor pick-up, pause, 3 curls, set-down, ±2 mm | 3 | −0.43 % | +2.07 % | −0.34 % | MEDIUM (HIGH) |
+| Rack to shoulders, 2 presses, un-rack, ±2 mm | 2 | −0.18 % | +1.58 % | −0.14 % | MEDIUM (HIGH) |
+| 0.08 m partial between 2 reps, ±2 mm | 2 | −0.43 % | +1.20 % | −0.34 % | MEDIUM (HIGH) |
+| ISS, 1000 N device force, ±2 mm (vs 500 J, 1028.9 N) | 3 | −0.37 % | +0.15 % | −0.36 % | MEDIUM (HIGH) |
+| Scale 3 % too large, no noise | 3 | +2.53 % | +0.67 % | +2.62 % | MEDIUM (HIGH) |
+| Scale 3 % too large, ±2 mm | 3 | +2.80 % | +1.98 % | +2.86 % | MEDIUM (HIGH) |
+| 0.25 m rep, 5 s rests, no noise (vs 24.525 J, 112.5 N) | 3 | −0.81 % | −0.01 % | −0.73 % | MEDIUM (HIGH) |
 
-The last two rows are **not** a sign that scale error cancels: the +3 % from the scale
-and the −3 % from the trimmed window are independent errors that happen to be the same
-size on a 0.5 m rep. Against the *uncorrected* session, a 3 % larger scale still makes
-work and range of motion exactly 3 % larger (the tests assert this).
+The two scale rows are the scale error plus the window residual: +3 % in scale is +3 % in
+work and range of motion (the tests assert it against the uncorrected session), less the
+0.5 % the trimmed window leaves out. (While the boundary sat at the pause's edge the
+window residual was −3 %, which cancelled the scale error on a 0.5 m rep and made the
+rows read −0.26 % and +0.67 %; that was a coincidence of sizes, not scale error cancelling.)
 
-The test assertions use tolerances (work within 4–10 %, peak within 3–10 % depending on
-the case); where the plan's original target was beaten by the window residual (work 2 %,
-range of motion 1 % for the noise-free rep) the assertion carries the measured bound
-(4 % and 3 %).
+The test assertions use tolerances (work within 2–10 %, peak within 3–10 % depending on
+the case); the plan's original targets (work 2 %, range of motion 1 % for the noise-free
+rep, 3 % work for the kinetic exchange on the ISS) are met again.
 
 **Peak force is the noisiest output.** Over 200 seeds the worst peak-force error was
-**3.37 % at ±2 mm and 8.72 % at ±5 mm** (measured in review, reproduced with the trimmed
-window; work and range of motion worst 3.45 % and 2.86 % at ±2 mm, 4.03 % and 3.32 % at
-±5 mm). White noise is the optimistic case: real pose-model error is correlated in time.
+**3.37 % at ±2 mm and 8.72 % at ±5 mm** (measured in review, reproduced after the trim;
+work and range of motion worst 0.77 % and 0.69 % at ±2 mm, 1.28 % and 1.11 % at ±5 mm;
+with the boundary at the pause's edge they were 3.45 % and 2.86 %, 4.03 % and 3.32 %). White noise is the optimistic case: real pose-model error is correlated in time.
 A 1 cm wobble at 2.5 Hz — inside the pass band — measured +4 to +10 % work and +11 to
 +14 % peak force in review, so the table above is a lower bound on the error of real
 video. The plan's ISS expected value is `1000 × 0.5 J` plus a kinetic term; for a

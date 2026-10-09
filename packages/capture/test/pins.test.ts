@@ -21,8 +21,8 @@ const percent = (actual: number, truth: number): number => ((actual - truth) / t
 
 describe("the filter cutoff is pinned by a lift it cannot fully resolve", () => {
   // A 0.5 m lift in 0.4 s, no noise, 60 Hz. At the 4 Hz default the two-pass filter flattens it:
-  // work reads about 9.7 % low and peak force 10.5 % low. At 6 Hz the same lift reads -6.0 % / -3.3 %,
-  // at 8 Hz -4.3 % / -0.9 % (measured). A cutoff doubled or moved to 6 Hz inside analyzeSession changes both.
+  // work reads about 8.2 % low and peak force 10.5 % low. At 6 Hz the same lift reads -2.9 % / -3.3 %,
+  // at 8 Hz -2.2 % / -0.9 % (measured). A cutoff doubled or moved to 6 Hz inside analyzeSession changes both.
   // Truth: the same rep sampled at 2000 Hz, rest to rest, through trajectoryWork. (Not 49.05 J: at 0.4 s the
   // braking force m·a exceeds the weight, so part of the lift does negative work and W+ is 64.69 J.)
   const single: Leg[] = [[0.2, 0], [0.4, 0.5], [0.4, 0], [0.2, 0]];
@@ -34,12 +34,12 @@ describe("the filter cutoff is pinned by a lift it cannot fully resolve", () => 
     expect(truth.peakForceN).toBeCloseTo(MASS_KG * (EARTH + (5.7735 * 0.5) / 0.4 ** 2), 0);
   });
 
-  it("at the default cutoff the middle rep reads work -9.7 % (±1 point) and peak force -10.5 % (±1 point)", () => {
-    // Work was -5.92 % in the review, before the rep window was trimmed; the trimmed window also drops the
-    // first and last 1.5 cm of the lift, so the measured value moved to -9.69 %. Peak force is unchanged.
+  it("at the default cutoff the middle rep reads work -8.2 % (±1 point) and peak force -10.5 % (±1 point)", () => {
+    // Work was -5.92 % in the review, before the rep window was trimmed. Trimmed at the pause's edge (1.5 cm)
+    // it read -9.69 %; trimmed at the rest level (3 mm) it reads -8.21 %. Peak force is unchanged.
     const rep = analyze(legSession({ legs: repLegs(3, 0.5, 0.4, 0.4, 1) })).reps[1]!;
-    expect(percent(rep.positiveWorkJ, truth.positiveWorkJ)).toBeGreaterThan(-9.69 - 1);
-    expect(percent(rep.positiveWorkJ, truth.positiveWorkJ)).toBeLessThan(-9.69 + 1);
+    expect(percent(rep.positiveWorkJ, truth.positiveWorkJ)).toBeGreaterThan(-8.21 - 1);
+    expect(percent(rep.positiveWorkJ, truth.positiveWorkJ)).toBeLessThan(-8.21 + 1);
     expect(percent(rep.peakForceN, truth.peakForceN)).toBeGreaterThan(-10.51 - 1);
     expect(percent(rep.peakForceN, truth.peakForceN)).toBeLessThan(-10.51 + 1);
   });
@@ -90,8 +90,8 @@ describe("an asymmetric session: rep that rises 0.5 m and comes back only 0.35 m
   //  - lowering 0.35 m in 1.4 s: |m a|max = 10.3 N, force upward throughout, motion downward: W- = -m g × 0.35 = -34.335 J.
   //  - peak force: m (g + a_max) at the lift's acceleration, 10 × (9.81 + 5.7735 × 0.5 / 0.36) = 178.3 N.
   //    The lowering peaks at only 10 × (9.81 + 5.7735 × 0.35 / 1.96) = 108.4 N.
-  //  Measured with the trimmed window: ROM 0.489, W+ 47.30 (-3.6 %), W- -33.18 (-3.4 %), peak 174.8 N (-2.0 %,
-  //  the filter's share at 0.6 s). The first and last 1.5 cm belong to the pauses.
+  //  Measured with the window at the rest level: ROM 0.501, W+ 49.1 (+0.1 %), W- -34.2 (-0.4 %), peak 174.8 N
+  //  (-2.0 %, the filter's share at 0.6 s). (At the pause's edge: ROM 0.489, W+ -3.6 %, W- -3.4 %.)
   it("0.6 s up, 1.4 s down: ROM is the lift height (0.5 m, not top - end = 0.35 m); positive and negative work are m g × 0.5 and -m g × 0.35", () => {
     const r = analyze(asymmetric(0.6, 1.4));
     expect(r.reps).toHaveLength(3);
@@ -121,8 +121,8 @@ describe("an asymmetric session: rep that rises 0.5 m and comes back only 0.35 m
 
 describe("impulse", () => {
   it("of a rep that starts and ends near rest is m g × durationS within 3 %", () => {
-    // impulse = (m g) Δt + m Δv. The window starts and ends at about 0.23 m/s (the pauses claim the first
-    // and last 1.5 cm), so m Δv is -4.6 N·s against 166.8: 2.9 % low. A doubled impulse is 100 % high.
+    // impulse = (m g) Δt + m Δv. The window starts and ends at about 0.1 m/s (3 mm into the lift), so m Δv is
+    // about -1.8 N·s against 180: 1 % low (2.9 % at the pause's edge, 1.5 cm in). A doubled impulse is 100 % high.
     const r = analyze(syntheticSession({ reps: 3, heightM: 0.5, upS: 1, downS: 1, restS: 5, rateHz: 60, noiseM: 0, seed: 1, metersPerUnit: SCALE }));
     for (const rep of r.reps) {
       expect(Math.abs(rep.impulseNs - MG * rep.durationS) / (MG * rep.durationS)).toBeLessThan(0.03);
