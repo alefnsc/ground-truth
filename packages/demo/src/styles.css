@@ -124,3 +124,319 @@ main {
     scroll-behavior: auto !important;
   }
 }
+
+/* ---- provenance chips: the tag is text; colour only reinforces it ------------------------------ */
+.chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.chip-measured { background: #e0f2e4; color: #14532d; }
+.chip-manual { background: #e6e6f6; color: #2f2d78; }
+.chip-model { background: #dfeafa; color: #12408f; }
+.chip-assumption { background: #fde3e3; color: #8a1f1f; }
+.chip-calibrated { background: #eee3f7; color: #582a85; }
+.chip-estimate { background: #fbeacb; color: #6b3f00; }
+
+/* ---- blocks ----------------------------------------------------------------------------------- */
+.block {
+  margin-bottom: 28px;
+}
+.block > h2 {
+  margin: 0 0 8px;
+  font-size: 1.125rem;
+}
+h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+h4 {
+  margin: 12px 0 4px;
+  font-size: 0.9375rem;
+}
+.note,
+.explain {
+  margin: 4px 0 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+/* ---- forms ------------------------------------------------------------------------------------ */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+}
+.field label {
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+.field .unit {
+  font-weight: 400;
+  color: var(--muted);
+}
+input[type="number"] {
+  font: inherit;
+  min-height: 44px;
+  padding: 6px 10px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid #8a867c;
+  border-radius: var(--radius);
+  width: 100%;
+  max-width: 14rem;
+}
+input[aria-invalid="true"] {
+  border-color: #b3261e;
+  border-width: 2px;
+}
+.field-error {
+  color: #a31f18;
+  font-size: 0.875rem;
+}
+.field-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.field-check label {
+  font-weight: 400;
+}
+input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+input[type="range"] {
+  width: 100%;
+  min-height: 44px;
+  accent-color: var(--accent);
+}
+.person {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 var(--gap);
+}
+
+/* ---- environment radio group ------------------------------------------------------------------ */
+.env-group {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+.env-option {
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-height: 56px;
+  padding: 8px 12px;
+  text-align: left;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid #8a867c;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.env-option[aria-checked="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.env-name {
+  font-weight: 700;
+}
+.env-g {
+  font-size: 0.8125rem;
+}
+
+/* ---- the two numbers -------------------------------------------------------------------------- */
+.numbers {
+  display: grid;
+  gap: var(--gap);
+}
+.big {
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+}
+.numbers .big {
+  margin-bottom: 0;
+}
+.big-value {
+  margin: 4px 0;
+  font-size: 2.25rem;
+  font-weight: 700;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.big-value .unit {
+  font-size: 0.9375rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+.legend {
+  margin-top: 12px;
+  font-size: 0.9375rem;
+}
+.legend summary,
+.card-more summary {
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+.legend ul {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px;
+}
+.legend li {
+  margin: 6px 0;
+}
+
+/* ---- session cards ---------------------------------------------------------------------------- */
+.cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.card {
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.card.excluded .metrics {
+  opacity: 0.55;
+}
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+}
+.card-head h3 {
+  flex: 1 1 10rem;
+}
+.metrics {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+.metric {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+}
+.metric-label {
+  width: 100%;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+.metric-value {
+  font-size: 1.375rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.metric-extra {
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+.metric-reason {
+  width: 100%;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+.detail-list {
+  margin: 0;
+}
+.detail-list dt {
+  margin-top: 10px;
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+.detail-list dd {
+  margin: 2px 0 0;
+}
+.detail-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.detail-note {
+  display: block;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+.link-button,
+.mark-button {
+  font: inherit;
+  min-height: 44px;
+  padding: 6px 12px;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.horizon-out {
+  font-weight: 700;
+}
+.cycles {
+  margin: 4px 0;
+  font-size: 1.0625rem;
+  font-weight: 600;
+}
+
+/* ---- fixed footer ----------------------------------------------------------------------------- */
+.fixed-note {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 8px var(--gap);
+  background: var(--surface);
+  color: var(--text);
+  border-top: 1px solid var(--line);
+  font-size: 0.8125rem;
+  text-align: center;
+  z-index: 5;
+}
+
+/* ---- wider screens ---------------------------------------------------------------------------- */
+@media (min-width: 720px) {
+  .env-group {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .numbers {
+    grid-template-columns: 1fr 1fr;
+  }
+  .metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+  .person {
+    max-width: 32rem;
+  }
+}

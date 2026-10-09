@@ -6,6 +6,7 @@ import {
   TREADMILL_DEFAULTS,
   cameraSession,
   cycleErgometer,
+  peakInBodyWeights,
   resistiveSquats,
   treadmillRun,
   weakestTag,
@@ -239,5 +240,28 @@ describe("provenance", () => {
   it("rejects a person that cannot exist", () => {
     expect(() => treadmillRun({ massKg: 0, legLengthM: 0.9 }, ENVS.EARTH)).toThrow(RangeError);
     expect(() => resistiveSquats({ massKg: 78.4, legLengthM: Number.NaN }, ENVS.EARTH)).toThrow(RangeError);
+  });
+});
+
+describe("peak load in body weights", () => {
+  /*
+   * Earth treadmill: 1922.76 / 769.104 = 2.5 (the assumed multiple, by construction).
+   * Squats on Earth: (1000 + 769.104) / 769.104 = 1 + 1000 / 769.104 = 1 + 1.300214 = 2.300214.
+   * Squats on the ISS: 1000 / 769.104 = 1.300214 (769.104 × 1.3 = 999.835; the rest, 0.165, is 0.000214 of 769.104).
+   */
+  it("divides by the Earth body weight, so the ISS reads below one body weight only if the device is below it", () => {
+    expect(peakInBodyWeights(treadmillRun(person, ENVS.EARTH), person).value).toBeCloseTo(2.5, 12);
+    expect(peakInBodyWeights(resistiveSquats(person, ENVS.EARTH), person).value).toBeCloseTo(2.300214, 6);
+    const iss = peakInBodyWeights(resistiveSquats(person, ENVS.ISS), person);
+    expect(iss.value).toBeCloseTo(1.300214, 6);
+    expect(iss.unit).toBe("× Earth body weight");
+    expect(iss.tag).toBe("MODEL");
+  });
+
+  it("keeps the tag of the peak load and passes a missing peak load on with a reason", () => {
+    expect(peakInBodyWeights(treadmillRun(person, ENVS.MOON), person).tag).toBe("ASSUMPTION");
+    const none = peakInBodyWeights(cycleErgometer(person, ENVS.EARTH), person);
+    expect(none.value).toBeNull();
+    expect(none.note).toMatch(/no skeletal load term/i);
   });
 });

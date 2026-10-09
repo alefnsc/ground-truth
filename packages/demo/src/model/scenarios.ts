@@ -400,3 +400,20 @@ export function cameraSession(set: CameraSetInput): SessionResult {
     details: set.details,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Peak load in multiples of Earth body weight
+// ---------------------------------------------------------------------------
+
+/** A session's peak load as a multiple of the person's body weight on Earth (m · 9.81), with the peak load's own tag. */
+export function peakInBodyWeights(session: SessionResult, person: Person): Quantity {
+  validatePerson(person);
+  const unit = "× Earth body weight";
+  if (session.peakLoad.value === null) return quantity(null, unit, session.peakLoad.tag, session.peakLoad.note);
+  return quantity(
+    session.peakLoad.value / (person.massKg * STANDARD_GRAVITY_MS2),
+    unit,
+    session.peakLoad.tag,
+    "Peak load divided by this person's body weight on Earth (m · 9.81 m/s²). Same source as the peak load.",
+  );
+}

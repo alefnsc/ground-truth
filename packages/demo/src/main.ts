@@ -1,4 +1,5 @@
 import "./styles.css";
+import { mountCurrencies } from "./view/currencies";
 
 /**
  * Tabs: role=tablist / tab / tabpanel, one tab in the tab order at a time, arrow keys
@@ -37,3 +38,6 @@ function wireTabs(tablist: HTMLElement): void {
 
 const tablist = document.querySelector<HTMLElement>('[role="tablist"]');
 if (tablist) wireTabs(tablist);
+
+const currenciesPanel = document.getElementById("panel-currencies");
+if (currenciesPanel) mountCurrencies(currenciesPanel);

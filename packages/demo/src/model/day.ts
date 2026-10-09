@@ -133,7 +133,7 @@ export function computeDay(person: Person, env: Env, specs: readonly SessionSpec
     const here = (sessions[dominant] as SessionResult).bout;
     const there = (earthSessions[dominant] as SessionResult).bout as LoadBout;
     const peakRatio = (here?.peakLoad ?? 0) / there.peakLoad;
-    const basis = `the ${(sessions[dominant] as SessionResult).title.toLowerCase()}, the bout that contributes most to the day on Earth`;
+    const basis = `the ${(sessions[dominant] as SessionResult).title.toLowerCase()} (the bout that contributes most to the day on Earth)`;
     if (peakRatio <= 0) {
       cycles = quantity(null, "× cycles", weakestTag([ratioTag, "MODEL"]), `Peak load is 0 for ${basis}, so no number of extra cycles makes it up.`);
     } else if (peakRatio >= 1) {
