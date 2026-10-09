@@ -45,25 +45,32 @@ is the discrete work-energy theorem, so a mass that starts and ends at rest has
 net work exactly `m · g_env · Δy`. No smoothing is applied.
 
 ```ts
-import { trajectoryWork, metabolicRange } from "@ground-truth/physics";
+import { trajectoryWork } from "@ground-truth/physics";
 
 const r = trajectoryWork(samples, 10, 9.81); // samples: { tS, yM }[]
 r.positiveWorkJ; r.negativeWorkJ; r.netWorkJ; r.peakForceN; r.displacementM;
-metabolicRange(r.positiveWorkJ); // { lowJ, highJ, kind: "ESTIMATE", basis }
 ```
+
+`negativeWorkJ` is <= 0. `peakForceN` is the maximum of |F| over the interior samples.
+See [Noise sensitivity](#noise-sensitivity) before feeding it camera positions.
 
 ### Devices and environment (`devices`)
 
 ```ts
 import {
-  ergometerActualPowerW, ergometerWorkJ, totalForceN, deviceForceForEarthEquivalenceN,
+  ergometerActualPowerW, ergometerWorkJ, metabolicRange, totalForceN, deviceForceForEarthEquivalenceN,
   treadmillEffectiveForceN, aredRepWorkJ, aredPeakForceN, froudeTransitionSpeedMs,
 } from "@ground-truth/physics";
 
+// ergometerSamples: { tS, displayedPowerW }[] from the dynamometer display. The 0.20–0.25
+// band is a cycling gross-efficiency figure, so it is applied to ergometer work as a
+// cross-check, not to the work of a lift.
+
 ergometerActualPowerW(75);                       // 61.7 W (0.98·P − 11.8)
+metabolicRange(ergometerWorkJ(ergometerSamples)); // { lowJ, highJ, kind: "ESTIMATE", basis }
 deviceForceForEarthEquivalenceN(1769.1, 78.4, 0); // 1769.1 N on the ISS
 treadmillEffectiveForceN(78.4, 0, 0.7);           // 538.4 N
-aredRepWorkJ(2669, 0.762);                        // { concentricJ: 2033.8, eccentricMagnitudeJ: 1830.4 }
+aredRepWorkJ(2669, 0.762);                        // { concentricJ: 2033.8, eccentricMagnitudeJ: 1830.4 } (a magnitude)
 aredPeakForceN(2669, 0.762, 2);                   // 3562 N
 froudeTransitionSpeedMs(1.62, 0.9);               // 0.854 m/s on the Moon
 ```
@@ -80,25 +87,89 @@ cumulativeDeficit([{ day: 0, achieved: 25 }, { day: 180, achieved: 25 }], 100); 
 
 ## Measured versus estimated
 
-Computed from the inputs you give it (a function of the data, nothing assumed):
-`trajectoryWork` (work and peak force), `ergometerActualPowerW` and
-`ergometerWorkJ`, `totalForceN`, `deviceForceForEarthEquivalenceN`,
-`treadmillEffectiveForceN`, `aredRepWorkJ`, `froudeTransitionSpeedMs`,
-`dailyLoadStimulus`, `cyclesToMatch`, `cumulativeDeficit`.
+Three groups, from most to least assumed.
 
-Modelled or estimated, and labelled as such:
+**Computed from the inputs, no model parameters.** The result follows from the
+data you pass in and the arithmetic stated in the doc comment:
+`trajectoryWork` (work and peak force), `totalForceN`,
+`deviceForceForEarthEquivalenceN`, `cumulativeDeficit` (only as good as the
+baseline and the achieved series you pass in) and the integration inside
+`ergometerWorkJ`.
 
+**A published model with stated parameters.** Correct if the model applies to your
+case; the parameter is in the source and the doc comment:
+
+- `ergometerActualPowerW`: the CEVIS dynamometer correction `0.98·P − 11.8`. CEVIS
+  was replaced by FERGO in October 2023 and this package does not claim the same
+  correction for FERGO.
+- `treadmillEffectiveForceN`: a static model, `m·g_env + supportFraction·m·1 g`. It
+  is not a measured ground reaction force.
+- `froudeTransitionSpeedMs`: Fr = 0.5. On the T2 treadmill the relevant gravity is the
+  harness-supplied one (`supportFraction × 9.81`), not 0.
+- `dailyLoadStimulus` and `cyclesToMatch`: exponent `m = 4`, the standard
+  Carter/Whalen/Beaupré value, not a fitted one.
+- `aredRepWorkJ`: a constant pneumatic force over a rest-to-rest stroke with a
+  lossless flywheel, and a default eccentric ratio of 0.9, the brief's upper bound.
+
+**Calibrated or estimated, and labelled as such.**
+
+- `aredPeakForceN` rests on `ARED_FLYWHEEL_EFFECTIVE_MASS_KG`, **CALIBRATED** to one
+  anchor in the brief (+893 N at 2669 N, 0.762 m, 2 s), not published. Three
+  assumptions stand behind it: (1) the effective flywheel mass is independent of
+  the load setting, because the brief states its anchor only "at the 600 lbf
+  setting"; (2) the brief says "up to +91 kgf", so the anchor is an upper bound,
+  which this model treats as the value for a sinusoidal stroke; (3) the work claim
+  assumes a lossless flywheel and a constant pneumatic force (the brief says
+  "nearly constant"). The brief also calls the term "velocity-dependent" while writing
+  `F_flywheel(ẍ)` and describing a peak at the bottom of the stroke; this model
+  follows the formula and the timing sentence, so the term is proportional to
+  acceleration.
 - `metabolicRange` is a range (gross efficiency 0.20–0.25), tagged `"ESTIMATE"`.
   Kilocalories are never derived from mechanics as a single figure.
-- `aredPeakForceN` rests on `ARED_FLYWHEEL_EFFECTIVE_MASS_KG`, which is
-  **CALIBRATED** to one anchor in the brief (+893 N at 2669 N, 0.762 m, 2 s), not
-  published. `aredRepWorkJ` defaults the eccentric ratio to 0.9, the brief's upper bound.
-- `ergometerActualPowerW` is the CEVIS dynamometer correction; CEVIS was replaced
-  by FERGO in October 2023 and this package does not claim the same correction
-  for FERGO.
-- `cumulativeDeficit` is only as good as the baseline and the achieved series you
-  pass in. The stimulus exponent `m = 4` is the standard Carter/Whalen/Beaupré
-  value, not a fitted one.
+- `aredRepWorkJ` returns `eccentricMagnitudeJ`, a positive magnitude; the signed
+  counterpart in `trajectoryWork` is `negativeWorkJ`, which is <= 0.
+
+## Noise sensitivity
+
+`trajectoryWork` applies **no smoothing**. `positiveWorkJ` and `peakForceN` are
+**not usable on raw camera positions**: they come from first and second
+differences of the position, which amplify noise. Filter the positions first.
+
+Measured in review on synthetic trajectories, not on real video: 10 kg, 0.5 m,
+a 1 s lift followed by a 1 s lowering, 60 Hz, Earth, a minimum-jerk profile with
+±2 mm uniform position noise. The noise-free truth is 49.05 J and 126.9 N. Filter:
+zero-phase 2nd-order Butterworth low-pass.
+
+| Filter | `positiveWorkJ` | `peakForceN` |
+|---|---|---|
+| none | 55.48 J | 363 N |
+| 10 Hz | 51.39 J | 152.9 N |
+| 6 Hz | 50.38 J | 139.9 N |
+| 4 Hz | 49.82 J | 131.7 N |
+| 3 Hz | 49.77 J | 128.8 N |
+
+`netWorkJ` stayed within 0.5 J of the truth throughout, because it depends only on
+the end samples. That is why it must not be used as evidence that the input is
+clean. A higher sample rate makes raw input worse, not better: differencing divides
+the noise by the sample interval, and by its square for acceleration. Guidance: low-pass at 3–4 Hz for peak force;
+6 Hz is enough for work. The filter is not part of this package.
+
+## Consuming this package
+
+`main` and `types` point at the TypeScript source, and the source imports are
+extensionless. Consume it through a bundler or a TypeScript-aware toolchain: an npm
+workspace, or a git dependency pinned to a commit SHA. It is not published to a
+registry and does not run under plain Node without a build. There is no build step.
+
+## Known gaps
+
+What the next plan (capture) needs from this package and does not have yet:
+
+- An optional device force in the trajectory integral. A camera-tracked ARED rep at
+  g = 0 currently yields only kinetic work.
+- Path length or range of motion. `displacementM` is 0 over a full rep.
+- A per-sample force series (today only the peak is returned).
+- Impulse and loading rate.
 
 ## Two places where the numbers differ from the brief's prose
 

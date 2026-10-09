@@ -291,6 +291,13 @@ Check the two-bout expectation by hand before trusting the figure above: `10·1e
 
 ---
 
+## Deviations from the brief, recorded
+
+- `AppliedLoad` omits `mode` and `force_model`, and `Device` omits `E4D` and `ROCKY` and adds `FREE_WEIGHT`, relative to `docs/strategy.md` §3.
+- The brief calls the ARED flywheel term "velocity-dependent" but writes it as `F_flywheel(ẍ)` and describes a peak at the bottom of the stroke. The package follows the formula and the timing sentence (the term is proportional to acceleration); see the comment on `ARED_FLYWHEEL_EFFECTIVE_MASS_KG`.
+- TypeScript resolved to 7.x (`^7.0.2`) rather than the "TypeScript 5" named under Tech stack.
+- Review wave: `aredRepWorkJ` returns `eccentricMagnitudeJ`, not the `eccentricJ` written in Task 3 above, so that its sign convention (a positive magnitude) is explicit next to `trajectoryWork().negativeWorkJ` (<= 0). `G_ENV_MS2` gains `TRANSIT: 0` so every `Body` has a gravity.
+
 ## Out of this plan
 
 Rep segmentation and smoothing of camera trajectories (the `capture` plan), the demo screen, any UI, any network or storage code, per-bone-site stress models, the Turner/Robling saturating refinement, and any dataset work (re-read brief §6 after 2026-10-28).

@@ -38,7 +38,8 @@ export function dailyLoadStimulus(bouts: readonly LoadBout[], exponent: number =
  * needs 256 times the cycles. (S itself only falls by the factor loadRatio.)
  *
  * Passing `1 − Genc decrement` as the ratio assumes the stress at the bone site scales
- * with the measured in-shoe force, which Genc 2010 does not establish.
+ * with the measured in-shoe force. That is an assumption of this package; Genc 2010
+ * reports the in-shoe force, not bone-site stress.
  */
 export function cyclesToMatch(loadRatio: number, exponent: number = LOAD_STIMULUS_EXPONENT): number {
   requirePositive("loadRatio", loadRatio);

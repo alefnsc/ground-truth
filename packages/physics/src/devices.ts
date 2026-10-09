@@ -148,8 +148,8 @@ const ARED_ANCHOR_PERIOD_S = 2;
  *
  * Three assumptions stand behind it:
  *  1. M_eff is taken to be independent of the load setting. The brief states the anchor
- *     only "at the 600 lbf setting"; at any other setting the inertial term is the same
- *     893 N-at-anchor-geometry term (tested as a property, not verified against a device).
+ *     only "at the 600 lbf setting"; at any other setting the model adds the same
+ *     M_eff × a_peak (tested as a property, not verified against a device).
  *  2. The brief says "up to +91 kgf", so +893 N is an upper bound. This model treats it as
  *     the value reached by an ideal sinusoidal stroke; a real rep may produce less.
  *  3. The work claim in aredRepWorkJ assumes a lossless flywheel and a constant pneumatic force.
