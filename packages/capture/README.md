@@ -179,12 +179,28 @@ height*, so the two that bound it are **the pair whose rest levels agree**:
 Agreement is judged to `DWELL_BAND_M`: the pair with the smallest difference in level
 is the best, every pair within 1.5 cm of it agrees equally, and of those the **smallest
 window** wins (the latest start with the earliest end). The tolerance is needed because
-the levels inside one rest differ by fractions of a millimetre, and an exact minimum
-then falls on an arbitrary instant deep inside the rests, billing them to the rep; it is
-1.5 cm and not 3 mm because a hand that drifts a centimetre or two while it rests would
-otherwise find its exact match seconds before the lift. If one side has no pause at all
-(reps with no rest between them, a lowering that runs straight into the set-down) the
-segmenter's boundary is kept on that side.
+the levels inside one rest differ by fractions of a millimetre once there is noise, and
+an exact minimum then falls on an arbitrary instant deep inside the rests, billing them
+to the rep (measured at ±2 mm with 10 s rests: start up to 8.9 s early, work +7.8 %).
+
+**One candidate per rest level.** Before the pair is chosen, the pauses on each side of
+the top are grouped by level: a gap of more than `SAME_REST_LEVEL_M` = 3 cm (twice the
+band) separates two groups, and only the pause nearest the top in each group is a
+candidate. Two pauses at nearly the same level on the same side are the same rest seen
+twice; reaching for the outer one would add rest to the rep and no movement. A hand
+that sways while it rests leaves scattered pauses at levels further apart than the
+agreement band, and without the grouping the matching reached for a distant pair that
+happened to agree. The price is that a stop within 3 cm of the rest's height *is* the
+rest (see the failure modes).
+
+**Never behind the last return to the rest level.** On each side the boundary cannot
+lie further out than the last sample before the top (first after it) that is within
+3 mm of the lowest level on that side: the position came back to the rep's lowest point
+there, so nothing beyond it belongs to the rep. That sample is also the boundary on a
+side with no pause at all (reps with no rest between them, a lowering that runs
+straight into the set-down, a rest that wobbles by more than 1.5 cm and so holds no
+pause). The segmenter's own boundary is the *first* lowest sample of the rest, which in
+a wobbling rest is an arbitrary trough, often the first.
 
 **Where in the pause the boundary goes.** The 1.5 cm band only *detects* the pause: a
 run stays inside it until the movement has already travelled up to 1.5 cm. The pause's
@@ -230,12 +246,12 @@ motion agree to 0.1 point; `trimmedRangeFraction` reads one minus the loss):
 | 0.15 m, no noise | −1.3 % | −2.7 % | −5.5 % | −9.5 % | **−15.0 %** |
 | 0.25 m, no noise | −0.8 % | −1.3 % | −2.7 % | −4.2 % | −6.1 % |
 | 0.5 m, no noise | −0.5 % | −0.5 % | −1.1 % | −1.5 % | −2.2 % |
-| 0.15 m, ±2 mm (worst of 20 seeds) | −2.8 % | −3.7 % | −7.0 % | −13.8 % | **−31.5 %** |
+| 0.15 m, ±2 mm (worst of 20 seeds) | −2.8 % | −3.7 % | −7.0 % | −13.8 % | **−31.8 %** |
 | 0.25 m, ±2 mm | −1.4 % | −1.9 % | −3.7 % | −5.5 % | −10.3 % |
 | 0.5 m, ±2 mm | −0.7 % | −0.8 % | −1.3 % | −2.1 % | −3.2 % |
 | 0.15 m, ±5 mm (worst of 20 seeds) | −3.4 % | −5.7 % | −10.2 % | **−31.7 %** | **−28.2 %** |
 | 0.25 m, ±5 mm | −2.5 % | −1.8 % | −4.9 % | −11.7 % | −15.4 % |
-| 0.5 m, ±5 mm | −1.2 % | −0.9 % | −1.5 % | −2.5 % | −3.8 % |
+| 0.5 m, ±5 mm | −1.2 % | −0.9 % | −1.5 % | −2.5 % | −5.1 % |
 
 (The rule this replaced read −84 to −96 % in six of the fifteen no-noise cells: from
 4 s at 0.15 m, 6 s at 0.25 m and 8 s at 0.5 m.) **A 0.15 m movement taking 6 s or more
@@ -246,7 +262,7 @@ per phase loses up to a third of its work once there is noise**, with
 short.
 
 When only one half is slow (0.2 m, 1 s one way and 5 s the other) the fast half reads
-−1.4 % and the slow half −4.7 % (to −6.6 % at ±2 mm and −8.5 % at ±5 mm over 20 seeds).
+−1.4 % and the slow half −4.7 % (to −6.6 % at ±2 mm and −12.2 % at ±5 mm over 20 seeds).
 
 Constant-speed movement has no fast middle, so it shows the floor directly. Up and down
 0.3 m at a constant speed, 3 s rests, work:
@@ -256,7 +272,7 @@ Constant-speed movement has no fast middle, so it shows the floor directly. Up a
 | 12 cm/s | −0.9 % | −1.0 % | −0.5 % |
 | 8 cm/s | −1.3 % | −0.9 % | −0.3 % |
 | 5 cm/s | −1.3 % | −1.5 % | −1.2 % |
-| 3 cm/s | −1.7 % | **−65.8 %** | **−67.1 %** |
+| 3 cm/s | −1.7 % | **−67.0 %** | **−67.1 %** |
 | 2 cm/s | **−67.7 %** | **−67.4 %** | **−65.7 %** |
 
 Below the floor the rep collapses to the last 10 cm under the top (`trimmedRangeFraction`
@@ -272,15 +288,42 @@ between 3 and 5 cm/s.** (The previous rule collapsed at 5 cm/s and below, to −
 - **A stop on the way up in a rep that does not return to its start height** wins if it
   is nearer the return height than the start is (stop at 0.25 m, return to +0.15 m:
   range of motion and positive work −50 %, `trimmedRangeFraction` 0.50).
-- **A stop within 1.5 cm of the rest's height** is the same height: the rep ends (or
-  starts) there, and the last centimetre is left out (a 0.6 s stop 1 cm above the start
-  on the way down: negative work −2.4 %; 2 cm above, the rep runs on to the rest).
-- **A hand that sways by more than 1.5 cm between two rests.** The pauses nearest the rep
-  no longer agree, and the window reaches into the rest for one that does. A 2 cm sway
-  at 0.2 Hz under 0.5 m reps: the rep reads up to 1.1 s long (1.35 s at ±5 mm) and its
-  positive work +4.2 % (+5.8 %), which is the sway's own rise. The previous rule read
-  this case within 1.3 % and 0.22 s. A drift of 1 cm/s during 5 s rests, or a hand that
-  rises or sinks 2 cm in the rest and returns 1 cm off, stays within 1.2 % and 0.2 s.
+- **A stop within 3 cm of the rest's height is the rest.** The rep starts (or ends) at
+  the stop and reads that much short. A 0.6 s stop above the start height, on the way
+  down: 1 cm above, negative work −2.1 to −2.5 %; 2.5 cm above, −5.1 to −5.6 %; 5 cm
+  above, the stop is its own level, has no match on the way up, and the rep runs on to
+  the rest (−0.3 to +0.3 %). The same on the way up costs positive work and range of
+  motion (3 cm above: −6.1 to −6.5 %). Durations follow: 1.83 s instead of 2.85 s.
+- **A hand that sways or wobbles while it rests.** Sinusoids added to the whole
+  recording, 0.5 m reps of 1 s up and 1 s down (clean `durationS` 1.83 s). **Amplitude
+  is half the peak-to-peak.** The numbers depend on where in the oscillation the lift
+  begins, so each cell is the range over eight phases and three reps:
+
+  | Oscillation | Positive work | `durationS` | Peak force |
+  |---|---|---|---|
+  | sway 1 cm amplitude at 0.2 Hz, 5 s rests | −3.0 to +2.3 % | 1.80 to 1.90 s | |
+  | sway 2 cm amplitude at 0.2 Hz | −5.6 to +5.4 % | 1.80 to **3.02 s** | |
+  | sway 3 cm amplitude at 0.2 Hz | −6.6 to +10.5 % | 1.97 to **4.30 s** | |
+  | wobble 0.5 cm amplitude at 1.5 / 2.5 / 3 Hz, 4 s rests | ±1.6 / ±1.5 / −1.2 to +1.7 % | to 2.4 / 2.2 / 2.2 s | to +3.2 / +8.3 / +10.5 % |
+  | wobble 1 cm amplitude at 1.5 Hz, rests of 1, 4 and 10 s | −3.2 to +4.6 % | 1.90 to 2.50 s | −0.9 to +6.6 % |
+  | wobble 1 cm amplitude at 2.5 Hz | +2.4 to +3.5 % | 1.93 to 2.33 s | +6.6 to +16.7 % |
+  | wobble 1 cm amplitude at 3 Hz | +1.5 to +4.6 % | 1.93 to 2.23 s | +16.2 to +20.9 % |
+  | wobble 1 cm at 1.5 / 2.5 / 3 Hz with ±2 mm noise on top | to +5.2 / +5.8 / **+11.3 %** | to 2.52 / 2.33 / **2.90 s** | |
+  | wobble 1.5 cm amplitude at 1.5 / 2.5 Hz | to +8.4 / +8.8 % | to 2.5 / 2.3 s | |
+  | wobble 1.5 cm amplitude at 3 Hz | to **+59.9 %** | to **6.0 s** | |
+
+  The work error of a sway is the sway's own travel under the lift and is there whatever
+  the rule. What the rule adds is the duration: with a 2 cm sway the hand moves faster
+  than the 2 cm/s floor as the lift begins, so the nearest pause can be up to half a
+  second back, and beyond that amplitude the swaying rest stops being one level. A wobble
+  rides on the lift, so its work error and above all its peak-force error are real
+  movement that the 4 Hz filter passes; it no longer pulls the rest into the rep, except
+  at 1.5 cm amplitude and 3 Hz, where it still does. (For scale: before the grouping and
+  the return bound, the 1 cm wobble at 2.5 Hz read +17 % and 4.0 s after 1 s rests, +74 %
+  and 10 s after 4 s rests, +178 % and 22 s after 10 s rests; the rule before pair
+  matching read +8.9 % and 2.6 s there, and +38 % / 6 s at 3 Hz.) A drift of 1 cm/s during
+  5 s rests, or a hand that rises or sinks 2 cm in the rest and returns 1 cm off, stays
+  within 1.2 % and 0.2 s.
 - **A rep that does not return to its start height, with an earlier pause at the return
   height** still inside the segmenter's rep: the window is extended back to that pause.
 - **No pause before the set-down or after the pick-up**: see "Capture protocol".
@@ -289,9 +332,9 @@ between 3 and 5 cm/s.** (The previous rule collapsed at 5 cm/s and below, to −
   reps, with 0.6 s pauses either side, leaves both reps within 0.8 % at ±2 mm). When no pause
   separates it from a rep it stays in that rep and its work is added to it.
 - **Reps with no rest between them**: the turnaround at the bottom is borderline for a
-  pause when a lift is about 1 s. When it is taken for one the boundary falls 3 mm into
-  the movement, otherwise the segmenter's boundary is kept; either way work is within
-  0.7 % at ±2 mm and 1.2 % at ±5 mm.
+  pause when a lift is about 1 s. Pause or not, the boundary falls 3 mm into the movement
+  either side of the lowest sample: work within 0.6 % at ±2 mm and 1.0 % at ±5 mm, start
+  0.03 to 0.10 s late.
 - **`liftDurationS` at ±5 mm with a pause at the top**: the top's level is the highest
   sample of a noisy plateau, and a 1 s lift then reads up to 1.15 s (0.85 s without
   noise); one 0.4 s lift in a hundred read over the `filterLimited` threshold. At ±2 mm
@@ -393,10 +436,10 @@ boundary inside a pause is placed as before), and the four sticking-point rows r
 | 5 s rests, ±2 mm (30 seeds, worst) | 3 | −0.62 % | +2.97 % | −0.54 % | MEDIUM (HIGH) |
 | 5 s rests, ±5 mm (30 seeds, worst) | 3 | −0.83 % | +7.54 % | −0.76 % | MEDIUM (HIGH) |
 | 10 s rests, ±2 mm (30 seeds, worst) | 3 | −0.72 % | +3.70 % | −0.56 % | MEDIUM (HIGH) |
-| 10 s rests, ±5 mm (30 seeds, worst) | 3 | −1.11 % | +9.38 % | −0.80 % | MEDIUM (HIGH) |
+| 10 s rests, ±5 mm (30 seeds, worst) | 3 | −1.11 % | +9.38 % | −0.79 % | MEDIUM (HIGH) |
 | Floor pick-up, pause, 3 curls, set-down, ±2 mm (10 seeds, worst) | 3 | −0.55 % | +2.46 % | −0.47 % | MEDIUM (HIGH) |
-| Rack to shoulders, 2 presses, un-rack, ±2 mm (10 seeds, worst) | 2 | −0.58 % | +2.12 % | −0.48 % | MEDIUM (HIGH) |
-| 0.08 m partial between 2 reps, ±2 mm (10 seeds, worst) | 2 | −0.55 % | +2.27 % | −0.47 % | MEDIUM (HIGH) |
+| Rack to shoulders, 2 presses, un-rack, ±2 mm (10 seeds, worst) | 2 | −0.57 % | +2.12 % | −0.45 % | MEDIUM (HIGH) |
+| 0.08 m partial between 2 reps, ±2 mm (10 seeds, worst) | 2 | −0.51 % | +2.27 % | −0.42 % | MEDIUM (HIGH) |
 | 0.2 s stop half-way up, ±2 mm (10 seeds, worst; peak vs 155.8 N) | 1 | +0.58 % | −3.84 % | −0.24 % | MEDIUM (HIGH) |
 | 0.35 s stop half-way up, ±2 mm (10 seeds, worst) | 1 | +0.62 % | −3.49 % | −0.37 % | MEDIUM (HIGH) |
 | 0.2 s stop half-way down, ±2 mm (10 seeds, worst) | 1 | +0.60 % | −3.82 % | −0.36 % | MEDIUM (HIGH) |
@@ -424,9 +467,10 @@ peak within 3 to 10 %).
 **3.37 % at ±2 mm and 8.72 % at ±5 mm** (measured in review, reproduced with the current
 rep window; work and range of motion worst 0.77 % and 0.69 % at ±2 mm, 1.28 % and 1.11 %
 at ±5 mm). White noise is the optimistic case: real pose-model error is correlated in time.
-A 1 cm wobble at 2.5 Hz — inside the pass band — measured +4 to +10 % work and +11 to
-+14 % peak force in review, so the table above is a lower bound on the error of real
-video. The plan's ISS expected value is `1000 × 0.5 J` plus a kinetic term; for a
+A wobble of 1 cm amplitude at 2.5 Hz — inside the pass band — measures +2.4 to +3.5 % work
+and +6.6 to +16.7 % peak force over eight phases with the current rep window (the table
+under "Known failure modes" has the other frequencies and amplitudes), so the table above
+is a lower bound on the error of real video. The plan's ISS expected value is `1000 × 0.5 J` plus a kinetic term; for a
 minimum-jerk lift that term is zero, because the ½ m v² borrowed while accelerating is
 returned while braking inside the same lift and no interval changes sign (the derivation
 is in the test).
@@ -480,8 +524,12 @@ been done.
 - **Phantom reps from sway.** The 0.10 m threshold is absolute. A stationary arm with a
   slow sway can cross it: measured, a 6 cm sway at 0.25 Hz gives two 0.12 m reps.
 - **A recording that starts mid-lift** counts the visible part as a rep.
-- **White noise is the optimistic case** for the error table (see above): a 1 cm wobble
-  at 2.5 Hz passes the filter and measured +4 to +10 % work and +11 to +14 % peak force.
+- **White noise is the optimistic case** for the error table (see above): a wobble of
+  1 cm amplitude at 2.5 to 3 Hz passes the filter and measures up to +4.6 % work and
+  +16.7 to +20.9 % peak force; at 1.5 cm amplitude and 3 Hz it still pulls the rest into
+  the rep (+60 %).
+- **A stop within 3 cm of the rest's height is the rest**, and a sway of 2 cm amplitude
+  or more stretches a rep's duration (see "Rep window").
 - **Slow movement is trimmed as rest** below about 2 cm/s (3 to 5 cm/s with noise), a
   stop at the same height on both sides of the top reads as a rack, and a sub-threshold
   movement that no pause separates from a rep stays in it (see "Rep window").
@@ -504,7 +552,8 @@ Ten checks that no synthetic test can stand in for. `VALIDATED_ON_REAL_VIDEO` st
 5. **Whether the wrist landmark slides** along the forearm as the wrist rotates.
 6. **The real pick-up / pre-roll / set-down sequence,** to see whether the pause rule
    isolates the reps as it does on synthetic ones, and **how far a resting hand really
-   drifts and sways**: the rule takes two rests within 1.5 cm for the same height.
+   drifts, sways and trembles**: the rule takes two pauses within 3 cm on one side of the
+   top for the same rest, and a rest that wobbles more than 1.5 cm holds no pause at all.
 7. **A known mass through a measured height** at slow, normal and fast tempo, against
    `m·g·h`. Slow is where the synthetic limit is (see "Tempo limits").
 8. **Camera pitch (about 15°) and height:** how much each reads as lost range of motion.
