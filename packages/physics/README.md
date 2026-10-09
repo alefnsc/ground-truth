@@ -51,9 +51,10 @@ const r = trajectoryWork(samples, 10, 9.81); // samples: { tS, yM }[]
 r.positiveWorkJ; r.negativeWorkJ; r.netWorkJ; r.peakForceN; r.displacementM; r.pathLengthM; r.impulseNs;
 
 // A constant device force that resists upward motion (added weight, an ARED setting),
-// e.g. a camera-tracked rep on the ISS under 1000 N:
-trajectoryWork(samples, 78.4, 0, { deviceForceN: 1000 });
-forceSeries(samples, 78.4, 0, { deviceForceN: 1000 }); // { tS, forceN }[], interior samples only
+// e.g. a camera-tracked rep on the ISS under 1000 N. The mass is the LOAD's (the bar and plates
+// the wrist tracks), not the body's: the wrist trajectory is not the body's centre of mass.
+trajectoryWork(samples, 20, 0, { deviceForceN: 1000 });
+forceSeries(samples, 20, 0, { deviceForceN: 1000 }); // { tS, forceN }[], interior samples only
 ```
 
 The force model is `F = m·(g_env + a) + F_device`. The device force is constant and

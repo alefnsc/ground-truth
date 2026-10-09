@@ -283,3 +283,18 @@ For the ISS case derive the expected positive work analytically in a comment bef
 ## Out of this plan
 
 The browser camera adapter and the pose model (they ship with the demo), any UI, loading rate (a third derivative of position; revisit with real video), per-joint kinematics, multi-person frames, and anything about real-video validation, which is a manual check before the hackathon.
+
+---
+
+## Deviations recorded
+
+The review of the first implementation (see the commit history of `feat/capture`) changed the following from the text above. The plan's text is left as written; this is where the code departs from it.
+
+- **Task 3, rate thresholds.** `MIN_RATE_HZ` is 20, not 24. The old threshold sat exactly on a nominal camera rate (23.976 fps was refused, 29.97 fps graded LOW), and a `1e-9` epsilon had been added to rescue exact 24/30/50. The epsilon is gone; no threshold may sit on a nominal rate.
+- **Task 3, frames that are not in time order.** Frames whose timestamp is not finite or not greater than the last kept one are dropped before assessing and counted in the new `QualityReport.droppedFrames`, instead of throwing. More than `MAX_LOW_VISIBILITY_FRACTION` of the stream dropped this way is `LANDMARK_LOST`. A non-finite `wristY` or `visibility` is a lost landmark. `assessQuality`, `resampleUniform` and `analyzeSession` no longer throw for any frame content; invalid options still throw `RangeError`. Timestamps whose median spacing is far tighter than their overall spacing are refused as `LOW_FRAME_RATE`.
+- **Task 3, overridable limits.** `visibilityThreshold` and `maxGapS` are optional `SessionOptions` fields (defaults unchanged), passed through `assessQuality` (and `visibilityThreshold` through `resampleUniform`).
+- **Task 4, filter padding and `TOO_SHORT`.** `PADDING_CUTOFF_PERIODS` is exported with a new `filterPaddingSamples`; `analyzeSession` refuses a recording not longer than the padding for the requested cutoff with `TOO_SHORT` instead of letting the filter throw.
+- **Task 5/6, the trimmed rep window.** `segmentReps` is unchanged. `analyzeSession` trims each rep to movement onset and offset (`DWELL_MIN_S` = 0.3, `DWELL_BAND_M` = 0.015) before computing anything, so rests, pick-ups and set-downs are no longer billed to a rep. `RepResult` gains `liftDurationS` and `filterLimited` (`FILTER_LIMITED_LIFT_S` = 0.7). Measured consequences: work reads about 3 % short and range of motion 2.6 % short for a 0.5 m rep, `startS` 0.13–0.15 s late and `durationS` 0.27–0.30 s short; the plan's 0.15 s target for the timings is not met, and the session tests that asserted work within 2 % and range of motion within 1 % for the noise-free rep now assert 4 % and 3 %.
+- **Task 6, confidence.** The grade thresholds moved off the nominal rates (HIGH at ≥ 45 Hz, LOW below 27 Hz, from 50 and 30). The reported grade is capped at `MEDIUM` while `VALIDATED_ON_REAL_VIDEO` is `false`, because the grade describes capture conditions and was HIGH for a rep that read 121 % high; the uncapped grade is exported as `gradeCaptureConditions`. Tests that expected HIGH expect MEDIUM.
+- **Task 2, calibration.** `metersPerUnitFromKnownLength(lengthM, yA, yB)` is added (the preferred method: an object of known length at the wrist's depth). The README's scale section now carries the error budget, with depth as the dominant term, as estimates.
+- **Shared helpers.** The duplicated `requireFinite` helpers share one internal module.
