@@ -48,11 +48,23 @@ net work exactly `m · g_env · Δy`. No smoothing is applied.
 import { trajectoryWork } from "@ground-truth/physics";
 
 const r = trajectoryWork(samples, 10, 9.81); // samples: { tS, yM }[]
-r.positiveWorkJ; r.negativeWorkJ; r.netWorkJ; r.peakForceN; r.displacementM;
+r.positiveWorkJ; r.negativeWorkJ; r.netWorkJ; r.peakForceN; r.displacementM; r.pathLengthM; r.impulseNs;
+
+// A constant device force that resists upward motion (added weight, an ARED setting),
+// e.g. a camera-tracked rep on the ISS under 1000 N:
+trajectoryWork(samples, 78.4, 0, { deviceForceN: 1000 });
+forceSeries(samples, 78.4, 0, { deviceForceN: 1000 }); // { tS, forceN }[], interior samples only
 ```
 
-`negativeWorkJ` is <= 0. `peakForceN` is the maximum of |F| over the interior samples.
-See [Noise sensitivity](#noise-sensitivity) before feeding it camera positions.
+The force model is `F = m·(g_env + a) + F_device`. The device force is constant and
+always points against +y, so on the way down it does negative work, exactly as
+weight does. `negativeWorkJ` is <= 0. `peakForceN` is the maximum of |F| over the
+interior samples. `pathLengthM` is Σ|Δy| (0.5 for a 0.5 m lift, 1.0 for the lift
+and the lowering, where `displacementM` is 0). `impulseNs` is the signed ∫F dt,
+`(m·g_env + F_device)·Δt + m·(v_end − v_start)`, from the end velocities and not
+from integrating the noisy force series. `forceSeries` is the signed force at each
+interior sample. See [Noise sensitivity](#noise-sensitivity) before feeding any of
+it camera positions.
 
 ### Devices and environment (`devices`)
 
@@ -163,13 +175,12 @@ registry and does not run under plain Node without a build. There is no build st
 
 ## Known gaps
 
-What the next plan (capture) needs from this package and does not have yet:
+What is still missing:
 
-- An optional device force in the trajectory integral. A camera-tracked ARED rep at
-  g = 0 currently yields only kinetic work.
-- Path length or range of motion. `displacementM` is 0 over a full rep.
-- A per-sample force series (today only the peak is returned).
-- Impulse and loading rate.
+- Loading rate (a third derivative of position; revisit with real video).
+
+Closed for the capture pipeline: an optional device force in the trajectory integral,
+path length, a per-sample force series, and impulse.
 
 ## Two places where the numbers differ from the brief's prose
 

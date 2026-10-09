@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { G_ENV_MS2, metabolicRange, trajectoryWork, type Sample } from "../src/index";
+import { G_ENV_MS2, forceSeries, metabolicRange, trajectoryWork, type Sample } from "../src/index";
 
 const MASS_KG = 10;
 const HEIGHT_M = 0.5;
@@ -226,6 +226,116 @@ describe("trajectoryWork", () => {
     it("rejects a non-finite gravity", () => {
       expect(() => trajectoryWork(ok, MASS_KG, Number.POSITIVE_INFINITY)).toThrow(/gEnvMs2/);
     });
+  });
+});
+
+describe("trajectoryWork with a device force", () => {
+  const DEVICE_N = 1000;
+  const iss = { deviceForceN: DEVICE_N };
+
+  it("lift at g = 0 with 1000 N: the device is the work, ½mv² is only a rounding on top", () => {
+    const r = trajectoryWork(cosineLift(HEIGHT_M, DURATION_S, 60), MASS_KG, G_ENV_MS2.ISS, iss);
+    // 1000 × 0.5 = 500 J; the kinetic term lifts and returns the same ½ m v² and never changes a sign.
+    withinRel(r.positiveWorkJ, 500, 0.01);
+    expect(Math.abs(r.negativeWorkJ)).toBeLessThan(0.5);
+    // 1000 + 10 × 0.25 π²
+    withinRel(r.peakForceN, 1024.67, 0.01);
+  });
+
+  it("lift then lower at g = 0 with 1000 N: the device does negative work on the way down", () => {
+    const r = trajectoryWork(cosineRep(HEIGHT_M, DURATION_S, 60), MASS_KG, G_ENV_MS2.ISS, iss);
+    withinRel(r.positiveWorkJ, 500, 0.01);
+    withinRel(r.negativeWorkJ, -500, 0.01);
+    expect(Math.abs(r.netWorkJ)).toBeLessThan(0.5);
+  });
+
+  it("an omitted option, an empty object and deviceForceN 0 all equal the old behaviour", () => {
+    const samples = cosineRep(HEIGHT_M, DURATION_S, 60);
+    const plain = trajectoryWork(samples, MASS_KG, G_ENV_MS2.EARTH);
+    for (const options of [{}, { deviceForceN: 0 }]) {
+      const r = trajectoryWork(samples, MASS_KG, G_ENV_MS2.EARTH, options);
+      expect(r.positiveWorkJ).toBe(plain.positiveWorkJ);
+      expect(r.negativeWorkJ).toBe(plain.negativeWorkJ);
+      expect(r.peakForceN).toBe(plain.peakForceN);
+    }
+  });
+
+  it("the device force adds to the weight: Earth + 1000 N lifts 0.5 m for (98.1 + 1000) × 0.5 J net", () => {
+    const r = trajectoryWork(cosineLift(HEIGHT_M, DURATION_S, 60), MASS_KG, G_ENV_MS2.EARTH, iss);
+    withinRel(r.netWorkJ, (MASS_KG * G_ENV_MS2.EARTH + DEVICE_N) * HEIGHT_M, 0.005);
+  });
+
+  it("rejects a negative or non-finite device force", () => {
+    const samples = cosineLift(HEIGHT_M, DURATION_S, 60);
+    for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => trajectoryWork(samples, MASS_KG, 9.81, { deviceForceN: bad })).toThrow(RangeError);
+      expect(() => trajectoryWork(samples, MASS_KG, 9.81, { deviceForceN: bad })).toThrow(/deviceForceN/);
+      expect(() => forceSeries(samples, MASS_KG, 9.81, { deviceForceN: bad })).toThrow(/deviceForceN/);
+    }
+  });
+});
+
+describe("trajectoryWork path length", () => {
+  it("is 0.5 m for the lift and 1.0 m for lift then lower, where displacement is 0", () => {
+    const lift = trajectoryWork(cosineLift(HEIGHT_M, DURATION_S, 60), MASS_KG, G_ENV_MS2.EARTH);
+    expect(lift.pathLengthM).toBeCloseTo(0.5, 9);
+    const rep = trajectoryWork(cosineRep(HEIGHT_M, DURATION_S, 60), MASS_KG, G_ENV_MS2.EARTH);
+    expect(rep.pathLengthM).toBeCloseTo(1.0, 9);
+    expect(rep.displacementM).toBeCloseTo(0, 9);
+  });
+});
+
+describe("trajectoryWork impulse", () => {
+  it("full lift on Earth: m·g·T plus the zero change in momentum, 98.1 N·s", () => {
+    const r = trajectoryWork(cosineLift(HEIGHT_M, DURATION_S, 60), MASS_KG, G_ENV_MS2.EARTH);
+    withinRel(r.impulseNs, 98.1, 0.005);
+  });
+
+  it("first half of the lift on Earth: weight over 0.5 s plus m·v_peak = 49.05 + 10 × 0.7854", () => {
+    const r = trajectoryWork(cosineLiftFirstHalf(HEIGHT_M, DURATION_S, 60), MASS_KG, G_ENV_MS2.EARTH);
+    withinRel(r.impulseNs, 56.904, 0.01);
+  });
+
+  it("full lift at g = 0 with 1000 N: F_device × T = 1000 N·s", () => {
+    const r = trajectoryWork(cosineLift(HEIGHT_M, DURATION_S, 60), MASS_KG, G_ENV_MS2.ISS, { deviceForceN: 1000 });
+    withinRel(r.impulseNs, 1000, 0.005);
+  });
+
+  it("uses the end velocities: a = 2 from rest for 1 s on Earth is m g T + m Δv", () => {
+    // y = ½ a t², 1 s: Δv = 2 so m Δv = 20, weight impulse 98.1  ->  118.1 N·s, exact for a quadratic.
+    const samples = Array.from({ length: 61 }, (_, i) => ({ tS: i / 60, yM: (i / 60) ** 2 }));
+    const r = trajectoryWork(samples, MASS_KG, G_ENV_MS2.EARTH);
+    expect(r.impulseNs).toBeCloseTo(118.1, 9);
+  });
+});
+
+describe("forceSeries", () => {
+  // y = ½ a t² with a = 2 m/s²: the three-point acceleration is exact, so every force is m (g + a).
+  const quadratic = Array.from({ length: 61 }, (_, i) => ({ tS: i / 60, yM: (i / 60) ** 2 }));
+
+  it("returns the interior samples only, each at its own time, with force 118.1 N on Earth", () => {
+    const series = forceSeries(quadratic, MASS_KG, G_ENV_MS2.EARTH);
+    expect(series).toHaveLength(quadratic.length - 2);
+    expect(series[0]!.tS).toBeCloseTo(1 / 60, 12);
+    expect(series[series.length - 1]!.tS).toBeCloseTo(59 / 60, 12);
+    for (const p of series) expect(p.forceN).toBeCloseTo(118.1, 9);
+  });
+
+  it("is signed (a braking force on the ISS is negative) and includes the device force", () => {
+    const decel = Array.from({ length: 61 }, (_, i) => ({ tS: i / 60, yM: -((i / 60) ** 2) }));
+    for (const p of forceSeries(decel, MASS_KG, G_ENV_MS2.ISS)) expect(p.forceN).toBeCloseTo(-20, 9);
+    for (const p of forceSeries(quadratic, MASS_KG, G_ENV_MS2.EARTH, { deviceForceN: 50 })) expect(p.forceN).toBeCloseTo(168.1, 9);
+  });
+
+  it("agrees with the peak force trajectoryWork reports", () => {
+    const samples = cosineRep(HEIGHT_M, DURATION_S, 60);
+    const series = forceSeries(samples, MASS_KG, G_ENV_MS2.EARTH, { deviceForceN: 30 });
+    const peak = trajectoryWork(samples, MASS_KG, G_ENV_MS2.EARTH, { deviceForceN: 30 }).peakForceN;
+    expect(Math.max(...series.map((p) => Math.abs(p.forceN)))).toBe(peak);
+  });
+
+  it("validates the samples like trajectoryWork", () => {
+    expect(() => forceSeries(quadratic.slice(0, 2), MASS_KG, 9.81)).toThrow(/samples/);
   });
 });
 
