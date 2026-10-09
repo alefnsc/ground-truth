@@ -142,8 +142,8 @@ describe("trimmedRangeFraction: how much of the detected movement was measured",
 
 describe("rest levels agree to the band that defines a pause, not to the last millimetre", () => {
   // Exact agreement does not exist: the levels inside one rest differ by fractions of a millimetre, and
-  // the closest pair is then an arbitrary one deep inside the rests (measured with exact minimisation:
-  // start up to 9.5 s early with 10 s rests, work +7.8 % at ±2 mm). Pairs within DWELL_BAND_M of the best
+  // the closest pair is then an arbitrary one deep inside the rests (measured with exact minimisation at
+  // ±2 mm: start up to 8.9 s early with 10 s rests, work +7.8 %). Pairs within DWELL_BAND_M of the best
   // agreement are equal, and the smallest window wins.
   it("10 s rests, no noise and ±2 mm: each rep starts within 0.1 s of the lift and takes 2 s less the trimmed ends", () => {
     for (const [noiseM, seedList] of [[0, [1]], [0.002, seeds(5)]] as const) {
@@ -158,6 +158,8 @@ describe("rest levels agree to the band that defines a pause, not to the last mi
     }
   });
 
+  // (Since pauses are grouped by level, one rest offers one candidate and these two scenarios are held by
+  // the grouping as well: see wobble.test.ts.)
   // A hand that drifts while it rests. It rises 2 cm during each rest and the rep comes back 1 cm lower
   // than it started, so somewhere inside the rest there is a window at exactly the return height. With a
   // tolerance of ONSET_TOLERANCE_M that window won: start 1.9 to 2.3 s early, a 1 s lift reported as 3.2 s.

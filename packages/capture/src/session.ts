@@ -212,6 +212,35 @@ function offsetCandidate(y: readonly number[], first: number, run: number, ceili
   return { index: first, level };
 }
 
+/**
+ * Judgement call: two pauses on the same side of the top whose rest levels are within this of each other are
+ * the same rest seen twice, and only the one nearer the top may bound the rep. Twice the band: a pause cannot
+ * exist where the position spreads more than DWELL_BAND_M, so the pauses scattered through one wobbling rest
+ * sit within about a band of each other, while a sticking point, a rack or a pick-up pause is far further
+ * from the rest it could be confused with.
+ */
+export const SAME_REST_LEVEL_M = 2 * DWELL_BAND_M;
+
+/**
+ * `candidates` (innermost first) without those whose level is within SAME_REST_LEVEL_M of one already kept:
+ * the innermost candidate of each rest level. An outer pause may replace an inner one only when reaching for
+ * it adds real movement to the rep.
+ */
+function onePerRestLevel(candidates: readonly Boundary[]): Boundary[] {
+  if (candidates.length === 0) return [];
+  // group by level: sorted by level, a gap of more than SAME_REST_LEVEL_M starts a new group
+  const order = candidates.map((_, i) => i).sort((p, q) => (candidates[p] as Boundary).level - (candidates[q] as Boundary).level);
+  const innermost: number[] = []; // per group, the smallest position in `candidates` (innermost first)
+  let previous = Number.NEGATIVE_INFINITY;
+  for (const i of order) {
+    const level = (candidates[i] as Boundary).level;
+    if (level - previous > SAME_REST_LEVEL_M) innermost.push(i);
+    else if (i < (innermost[innermost.length - 1] as number)) innermost[innermost.length - 1] = i;
+    previous = level;
+  }
+  return innermost.sort((p, q) => p - q).map((i) => candidates[i] as Boundary);
+}
+
 /** First position in `sorted` (ascending) whose value is >= x. */
 function lowerBound(sorted: readonly number[], x: number): number {
   let lo = 0;
@@ -304,15 +333,26 @@ function matchLevels(onsets: readonly Boundary[], offsets: readonly Boundary[]):
  *  - Agreement is judged to DWELL_BAND_M. The best pair is the one with the smallest level difference; all
  *    pairs within DWELL_BAND_M of it count as agreeing equally, and of those the smallest window wins
  *    (latest onset, earliest offset). Exact minimisation does not work: the levels inside one rest differ by
- *    fractions of a millimetre (noise, filter ringing), so the exact minimum falls on an arbitrary window
- *    deep inside the rests and bills them to the rep (measured: start up to 9.5 s early with 10 s rests,
- *    work +7.8 % at +-2 mm). A tolerance of ONSET_TOLERANCE_M cured that but not a hand that drifts during
- *    the rest: one that rises 2 cm while resting and comes back 1 cm low has an exact match 2 s inside the
- *    rest (start 1.9 to 2.3 s early, a 1 s lift reported as 3.2 s). Two rests within the band that defines
- *    a pause are the same height as far as this rule can tell.
+ *    fractions of a millimetre once there is noise, so the exact minimum falls on an arbitrary window
+ *    deep inside the rests and bills them to the rep (measured at +-2 mm with 10 s rests: start up to 8.9 s
+ *    early, work +7.8 %). Two rests within the band that defines a pause are the same height as far as
+ *    this rule can tell.
+ *  - One candidate per rest level (onePerRestLevel). The pauses on one side of the top are grouped by
+ *    level, a gap of more than SAME_REST_LEVEL_M (twice the band) separating two groups, and only the
+ *    innermost pause of each group is a candidate. Two pauses at nearly the same level on the same side
+ *    are the same rest seen twice; reaching for the outer one adds no movement to the rep, only rest. A
+ *    hand that sways or wobbles while it rests leaves scattered pauses at levels further apart than the
+ *    agreement band, and without this the matching reached for a distant pair that happened to agree
+ *    (a 2 cm sway at 0.2 Hz: the rep read up to 4.2 s for 1.83 s).
+ *  - Never behind the last return to the rest level. `earliest` is the last sample before the top, and
+ *    `latest` the first after it, within ONSET_TOLERANCE_M of the level of the segmenter's boundary (the
+ *    lowest sample on that side). The position came back to the rep's lowest level there, so nothing
+ *    further out belongs to the rep: a boundary is clamped to them, and they are the boundary on a side
+ *    with no pause at all. A rest that wobbles by more than DWELL_BAND_M holds no pause, and the
+ *    segmenter's own boundary is its FIRST lowest sample, an arbitrary trough, often the first of the rest
+ *    (a 1 cm wobble at 2.5 Hz: work +74 % after 4 s rests, +178 % after 10 s, the whole rest in the rep).
  *  - One side without a candidate (reps with no rest between them, a lowering that runs straight into the
- *    set-down): the segmenter's boundary on that side, the innermost candidate on the other. Neither side:
- *    the segmenter's rep.
+ *    set-down): `earliest` or `latest` on that side, the innermost candidate on the other.
  *
  * Where in the pause the boundary goes. DWELL_BAND_M only detects the pause: a run stays inside the band
  * until the movement has already travelled up to 1.5 cm, and a boundary at the pause's edge cost a rep its
@@ -326,6 +366,10 @@ function matchLevels(onsets: readonly Boundary[], offsets: readonly Boundary[]):
  *    to the last `minPhaseDisplacementM` under the top. `trimmedRangeFraction` shows it.
  *  - A stop on the way up AND one at the same height on the way down is a rack to this rule: only the part
  *    above them is measured.
+ *  - A stop within SAME_REST_LEVEL_M (3 cm) of the rest's height is the same rest: the rep starts or ends at
+ *    the stop and reads that much short (up to 6.5 % of a 0.5 m rep).
+ *  - A sway of more than about 2 cm amplitude, or a wobble with noise on top, still stretches a rep (see the
+ *    README for the measured ranges), far less than before.
  *  - A stop on the way up in a rep that does not return to its start height wins if it is nearer the return
  *    height than the start is.
  *  - No pause before the set-down, or after the pick-up: nothing separates them from the rep, and the
@@ -337,22 +381,35 @@ function trimmedWindow(y: readonly number[], rep: Rep, rateHz: number, minPhaseD
   const run = Math.max(2, Math.round(DWELL_MIN_S * rateHz) + 1); // samples in a pause: first to last spans DWELL_MIN_S
   const ceiling = (y[rep.topIndex] as number) - minPhaseDisplacementM;
 
+  // The last time before the top, and the first time after it, that the position is at the level of the
+  // segmenter's boundary (within ONSET_TOLERANCE_M). Nothing outside these two can belong to the rep: the
+  // position came back to the rep's lowest level after it (before it). A pause found further out is still
+  // a pause at its level, but its boundary is clamped to them, and they are the boundary on a side that has
+  // no pause. (The segmenter's own boundary is the FIRST lowest sample of the rest, which in a rest that
+  // wobbles is an arbitrary trough, often the first.)
+  let earliest = rep.topIndex;
+  while (earliest > rep.startIndex && (y[earliest] as number) > (y[rep.startIndex] as number) + ONSET_TOLERANCE_M) earliest--;
+  let latest = rep.topIndex;
+  while (latest < rep.endIndex && (y[latest] as number) > (y[rep.endIndex] as number) + ONSET_TOLERANCE_M) latest++;
+
   const onsets: Boundary[] = []; // innermost (latest) first
   for (let last = rep.topIndex; last >= rep.startIndex; last--) {
     const c = onsetCandidate(y, last, run, ceiling);
-    if (c !== null) onsets.push({ index: Math.max(c.index, rep.startIndex), level: c.level });
+    if (c !== null) onsets.push({ index: Math.max(c.index, earliest), level: c.level });
   }
   const offsets: Boundary[] = []; // innermost (earliest) first
   for (let first = rep.topIndex; first <= rep.endIndex; first++) {
     const c = offsetCandidate(y, first, run, ceiling);
-    if (c !== null) offsets.push({ index: Math.min(c.index, rep.endIndex), level: c.level });
+    if (c !== null) offsets.push({ index: Math.min(c.index, latest), level: c.level });
   }
 
-  let onset = rep.startIndex;
-  let offset = rep.endIndex;
-  if (onsets.length > 0 && offsets.length > 0) ({ onset, offset } = matchLevels(onsets, offsets));
-  else if (onsets.length > 0) onset = (onsets[0] as Boundary).index;
-  else if (offsets.length > 0) offset = (offsets[0] as Boundary).index;
+  const nearOnsets = onePerRestLevel(onsets);
+  const nearOffsets = onePerRestLevel(offsets);
+  let onset = earliest;
+  let offset = latest;
+  if (nearOnsets.length > 0 && nearOffsets.length > 0) ({ onset, offset } = matchLevels(nearOnsets, nearOffsets));
+  else if (nearOnsets.length > 0) onset = (nearOnsets[0] as Boundary).index;
+  else if (nearOffsets.length > 0) offset = (nearOffsets[0] as Boundary).index;
 
   if (!(onset < rep.topIndex && rep.topIndex < offset && offset - onset >= 2)) {
     return { onset: rep.startIndex, offset: rep.endIndex };

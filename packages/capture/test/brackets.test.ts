@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { G_ENV_MS2 } from "@ground-truth/physics";
-import { DWELL_BAND_M, DWELL_MIN_S, FILTER_LIMITED_LIFT_S, analyzeSession, type PoseFrame, type SessionResult } from "../src/index";
+import { DWELL_BAND_M, DWELL_MIN_S, FILTER_LIMITED_LIFT_S, SAME_REST_LEVEL_M, analyzeSession, type PoseFrame, type SessionResult } from "../src/index";
 import { legSession, repLegs, syntheticSession, type Leg } from "./helpers";
 
 // Brackets. Each judgement-call constant of the rep window is held between two scenarios, one that
@@ -52,33 +52,66 @@ describe("DWELL_MIN_S = 0.3 s is bracketed", () => {
 });
 
 describe("DWELL_BAND_M = 1.5 cm is bracketed", () => {
-  // The band is also how closely two rest levels must agree to be the same height. A stop on the way
-  // down, a little above the rest the rep started from, is the same height if it is within the band (the
-  // rep ends there, the smallest window) and a different one if it is not (the rep ends at the rest).
+  // Twice the band (SAME_REST_LEVEL_M, 3 cm) is how close two pauses on one side of the top must be to
+  // count as the same rest, of which only the one nearer the top can bound the rep. A stop on the way
+  // down, a little above the rest the rep started from, is therefore the end of the rep if it is within
+  // 3 cm of the rest (the rep reads that much short) and not if it is further (the rep runs on to the rest).
   const stopAbove = (gapM: number): Leg[] => [[3, 0], [1, 0.5], [1, gapM], [0.6, gapM], [0.4, 0], [3, 0]];
+  const NOISE: readonly (readonly [number, readonly number[]])[] = [[0, [1]], [0.002, seeds(10)]];
 
-  it("is 0.015", () => {
+  it("is 0.015, and two pauses within 0.03 are the same rest", () => {
     expect(DWELL_BAND_M).toBe(0.015);
+    expect(SAME_REST_LEVEL_M).toBe(0.03);
   });
 
-  it("a 0.6 s stop 2 cm above the start is NOT the end of the rep (fails if the constant is doubled): the rep runs on to the rest", () => {
-    // measured: durationS 2.817 (2.800 to 2.833 over ten seeds at ±2 mm), W- -0.2 % (-0.42 to +0.14 %)
-    for (const [noiseM, seedList] of [[0, [1]], [0.002, seeds(10)]] as const) {
+  it("a 0.6 s stop 5 cm above the start is NOT the end of the rep (fails if the constant is doubled): the rep runs on to the rest", () => {
+    // measured: durationS 2.85 to 2.88, W- -0.3 to +0.3 %
+    for (const [noiseM, seedList] of NOISE) {
       for (const seed of seedList) {
-        const rep = analyze(legSession({ legs: stopAbove(0.02), noiseM, seed })).reps[0]!;
-        expect(Math.abs(rep.durationS - 2.817)).toBeLessThan(0.035);
+        const rep = analyze(legSession({ legs: stopAbove(0.05), noiseM, seed })).reps[0]!;
+        expect(Math.abs(rep.durationS - 2.867)).toBeLessThan(0.035);
         expect(relErr(-rep.negativeWorkJ, MG * 0.5)).toBeLessThan(0.01);
       }
     }
   });
 
-  it("a 0.6 s stop 1 cm above the start IS the same height (fails if the constant is halved): the rep ends there, 1 cm short", () => {
-    // measured: durationS 1.833 (1.833 to 1.850), W- -2.44 % (-2.51 to -2.13 %): the last centimetre is left out
-    for (const [noiseM, seedList] of [[0, [1]], [0.002, seeds(10)]] as const) {
+  it("a 0.6 s stop 2.5 cm above the start IS the same rest (fails if the constant is halved): the rep ends there, 2.5 cm short", () => {
+    // measured: durationS 1.83 to 1.85, W- -5.6 to -5.1 % (2.5 cm of 50), W+ and ROM untouched
+    for (const [noiseM, seedList] of NOISE) {
+      for (const seed of seedList) {
+        const rep = analyze(legSession({ legs: stopAbove(0.025), noiseM, seed })).reps[0]!;
+        expect(Math.abs(rep.durationS - 1.833)).toBeLessThan(0.035);
+        expect(relErr(-rep.negativeWorkJ, MG * 0.475)).toBeLessThan(0.01);
+        expect(relErr(rep.positiveWorkJ, MG * 0.5)).toBeLessThan(0.01);
+      }
+    }
+  });
+
+  it("a 0.6 s stop 1 cm above the start is the same rest too: the rep ends there, 1 cm short", () => {
+    // measured: durationS 1.83 to 1.87, W- -2.5 to -2.1 %
+    for (const [noiseM, seedList] of NOISE) {
       for (const seed of seedList) {
         const rep = analyze(legSession({ legs: stopAbove(0.01), noiseM, seed })).reps[0]!;
-        expect(Math.abs(rep.durationS - 1.833)).toBeLessThan(0.035);
+        expect(Math.abs(rep.durationS - 1.85)).toBeLessThan(0.035);
         expect(relErr(-rep.negativeWorkJ, MG * 0.49)).toBeLessThan(0.01);
+      }
+    }
+  });
+});
+
+describe("pauses are grouped by level, so a stop right at the 3 cm limit does not leave a stray candidate deep in the rest", () => {
+  // Comparing each pause only with those already kept drops the part of a noisy rest that is within 3 cm of
+  // an inner stop and keeps the part that is a hair further: an arbitrary instant seconds before the lift
+  // (measured that way: start up to 2.25 s early, durationS up to 5.17 s). Grouped, the stop and the rest
+  // are one level and the rep starts at the stop.
+  it("a 0.6 s stop 3 cm above the rest on the way up, no noise and ±2 mm over 10 seeds: the rep starts at the stop, 3 cm short", () => {
+    const legs: Leg[] = [[3, 0], [0.4, 0.03], [0.6, 0.03], [1, 0.5], [1, 0], [3, 0]];
+    for (const [noiseM, seedList] of [[0, [1]], [0.002, seeds(10)]] as const) {
+      for (const seed of seedList) {
+        const rep = analyze(legSession({ legs, noiseM, seed })).reps[0]!;
+        expect(Math.abs(rep.startS - 4.075)).toBeLessThan(0.035); // measured 4.07 to 4.08 (the stop ends at 4.0 s)
+        expect(Math.abs(rep.durationS - 1.85)).toBeLessThan(0.035); // measured 1.83 to 1.87
+        expect(relErr(rep.positiveWorkJ, MG * 0.47)).toBeLessThan(0.01); // measured -6.5 to -6.1 % of m g 0.5
       }
     }
   });
