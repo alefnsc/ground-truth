@@ -67,3 +67,59 @@ export function syntheticSession(o: SyntheticSessionOptions): PoseFrame[] {
   }
   return frames;
 }
+
+/** One leg of a hand-drawn movement: take `durationS` to reach `toM`, with a minimum-jerk profile (a pause is a leg to the same height). */
+export type Leg = [durationS: number, toM: number];
+
+export interface LegSessionOptions {
+  legs: readonly Leg[];
+  /** Height at the start, metres. Default 0. */
+  startM?: number;
+  rateHz?: number; // default 60
+  noiseM?: number; // default 0
+  seed?: number; // default 1
+  metersPerUnit?: number; // default 2.5
+  /** Added to every timestamp, so a recording whose clock does not start at 0 can be built. Default 0. */
+  clockOffsetS?: number;
+}
+
+/** Total duration of a list of legs. */
+export const totalDurationS = (legs: readonly Leg[]): number => legs.reduce((sum, leg) => sum + leg[0], 0);
+
+/** Height at time `tS` of the movement drawn by `legs` (it stays at the last height after the end). */
+export function legPosition(legs: readonly Leg[], tS: number, startM = 0): number {
+  let from = startM;
+  let local = tS;
+  for (const [durationS, toM] of legs) {
+    if (local < durationS) return from + (toM - from) * minJerk(local / durationS);
+    local -= durationS;
+    from = toM;
+  }
+  return from;
+}
+
+/**
+ * Wrist frames for an arbitrary movement drawn as legs (pick-ups, pauses, partial
+ * movements, anything the rest-lift-lower-rest `syntheticSession` cannot draw).
+ * Same image convention and noise as `syntheticSession`: y down, uniform ±noiseM metres.
+ */
+export function legSession(o: LegSessionOptions): PoseFrame[] {
+  const rateHz = o.rateHz ?? 60;
+  const metersPerUnit = o.metersPerUnit ?? 2.5;
+  const noise = lcg(o.seed ?? 1);
+  const n = Math.round(totalDurationS(o.legs) * rateHz) + 1;
+  const frames: PoseFrame[] = [];
+  for (let i = 0; i < n; i++) {
+    const tS = i / rateHz;
+    const yM = legPosition(o.legs, tS, o.startM ?? 0) + (o.noiseM ?? 0) * noise();
+    frames.push({ tS: tS + (o.clockOffsetS ?? 0), wristY: BOTTOM_WRIST_Y - yM / metersPerUnit, visibility: 1 });
+  }
+  return frames;
+}
+
+/** `reps` lifts of `heightM` (up, then down) with `restS` of stillness before, between and after, as legs. */
+export function repLegs(reps: number, heightM: number, upS: number, downS: number, restS: number): Leg[] {
+  const legs: Leg[] = [[restS, 0]];
+  for (let r = 0; r < reps; r++) legs.push([upS, heightM], [downS, 0], [restS, 0]);
+  return legs;
+}
