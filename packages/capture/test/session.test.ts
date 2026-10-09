@@ -177,6 +177,25 @@ describe("analyzeSession: measurement", () => {
   });
 });
 
+describe("analyzeSession: path length", () => {
+  it("pathLengthM is the distance travelled inside the rep window: up and down, twice the range of motion for a rep that returns", () => {
+    const r = ok(analyze(session()));
+    for (const rep of r.reps) {
+      // measured 0.9963: 3 mm at each of the two ends count as rest (bound: twice the 0.37 % measured)
+      expect(relErr(rep.pathLengthM, 2 * HEIGHT_M)).toBeLessThan(0.0075);
+      expect(relErr(rep.pathLengthM, 2 * rep.rangeOfMotionM)).toBeLessThan(0.001);
+    }
+  });
+
+  it("pathLengthM of a rep that rises 0.5 m and comes back 0.35 m is 0.85 m, not twice the range of motion", () => {
+    const frames = legSession({ legs: [[3, 0], [1, 0.5], [1, 0.15], [3, 0.15]] });
+    const r = ok(analyze(frames));
+    expect(r.reps).toHaveLength(1);
+    expect(relErr(r.reps[0]!.pathLengthM, 0.85)).toBeLessThan(0.01); // measured 0.8455 (-0.5 %)
+    expect(relErr(r.reps[0]!.rangeOfMotionM, 0.5)).toBeLessThan(0.01);
+  });
+});
+
 describe("analyzeSession: refusal", () => {
   it("metersPerUnit null: refused with NO_SCALE and no measurement fields", () => {
     const r = analyze(session({ noiseM: 0.002 }), { metersPerUnit: null });
@@ -316,10 +335,18 @@ describe("analyzeSession: invalid input", () => {
     expect(() => analyze(f, { massKg: -1 })).toThrow(/massKg/);
     expect(() => analyze(f, { gEnvMs2: Number.NaN })).toThrow(/gEnvMs2/);
     expect(() => analyze(f, { deviceForceN: -5 })).toThrow(/deviceForceN/);
-    expect(() => analyze(f, { cutoffHz: 40 })).toThrow(/cutoffHz/);
+    expect(() => analyze(f, { cutoffHz: -4 })).toThrow(/cutoffHz/);
+    expect(() => analyze(f, { cutoffHz: Number.POSITIVE_INFINITY })).toThrow(/cutoffHz/);
     expect(() => analyze(f, { minPhaseDisplacementM: 0 })).toThrow(/minPhaseDisplacementM/);
     expect(() => analyze(f, { metersPerUnit: 0 })).toThrow(/metersPerUnit/);
     expect(() => analyze(f, { metersPerUnit: Number.NaN })).toThrow(RangeError);
+  });
+
+  it("a cutoff above this stream's Nyquist frequency (40 Hz at 60 fps) is a refusal, not an exception", () => {
+    const r = analyze(session(), { cutoffHz: 40 });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reasons).toEqual(["LOW_FRAME_RATE"]);
   });
 
   it("honours cutoffHz and minPhaseDisplacementM", () => {

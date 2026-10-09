@@ -104,6 +104,7 @@ export interface RepResult {
   /** True when liftDurationS is under FILTER_LIMITED_LIFT_S: the 4 Hz default cutoff shapes a lift this fast, so work and peak force read low. */
   filterLimited: boolean;
   rangeOfMotionM: number; // height of the lift, smoothed top minus smoothed onset
+  pathLengthM: number; // distance travelled inside the rep window, up and down (Σ |Δy|): about twice rangeOfMotionM for a rep that returns to its start
   /**
    * How much of the movement the segmenter detected was measured: rangeOfMotionM divided by the segmenter's
    * range for this rep (its top minus the lower of its two ends). About 1 for a rep between two rests at the
@@ -363,6 +364,12 @@ function requireNonNegativeFinite(name: string, value: number): void {
   if (!Number.isFinite(value) || value < 0) throw new RangeError(`${name} must be a finite number >= 0, got ${value}`);
 }
 
+/** `reasons` with LOW_FRAME_RATE added where assessQuality puts it: after NO_SCALE, before the rest. */
+function withLowFrameRate(reasons: readonly RefusalReason[]): RefusalReason[] {
+  const at = reasons[0] === "NO_SCALE" ? 1 : 0;
+  return [...reasons.slice(0, at), "LOW_FRAME_RATE", ...reasons.slice(at)];
+}
+
 export function analyzeSession(frames: readonly PoseFrame[], options: SessionOptions): SessionResult {
   requireNonNegativeFinite("massKg", options.massKg);
   requireNonNegativeFinite("gEnvMs2", options.gEnvMs2);
@@ -377,15 +384,18 @@ export function analyzeSession(frames: readonly PoseFrame[], options: SessionOpt
     if (options.cutoffHz <= 0) throw new RangeError(`cutoffHz must be > 0, got ${options.cutoffHz}`);
   }
 
-  const quality = assessQuality(frames, metersPerUnit !== null, options);
+  const assessed = assessQuality(frames, metersPerUnit !== null, options);
+  // Whether the cutoff is below the Nyquist frequency depends on the stream's frame rate, which is frame
+  // content, so it is a refusal and not an exception: this stream's rate is too low for the cutoff asked for.
+  const cutoffHz = options.cutoffHz ?? DEFAULT_CUTOFF_HZ;
+  const quality: QualityReport =
+    cutoffHz < assessed.rateHz / 2 || assessed.reasons.includes("LOW_FRAME_RATE") ? assessed : { ...assessed, reasons: withLowFrameRate(assessed.reasons) };
   if (quality.reasons.length > 0 || metersPerUnit === null) {
     return { ok: false, reasons: quality.reasons, quality };
   }
 
   const grid = resampleUniform(frames, options);
   // The filter needs more samples than its padding; a recording shorter than that is TOO_SHORT (at the cutoff asked for).
-  const cutoffHz = options.cutoffHz ?? DEFAULT_CUTOFF_HZ;
-  if (cutoffHz >= grid.rateHz / 2) throw new RangeError(`cutoffHz must be below rateHz / 2 (${grid.rateHz / 2}), got ${cutoffHz}`);
   if (grid.tS.length <= filterPaddingSamples(grid.rateHz, cutoffHz)) {
     const reasons: RefusalReason[] = ["TOO_SHORT"];
     return { ok: false, reasons, quality: { ...quality, reasons } };
@@ -415,6 +425,7 @@ export function analyzeSession(frames: readonly PoseFrame[], options: SessionOpt
       liftDurationS,
       filterLimited: liftDurationS < FILTER_LIMITED_LIFT_S,
       rangeOfMotionM: top.yM - start.yM,
+      pathLengthM: work.pathLengthM,
       trimmedRangeFraction: (top.yM - start.yM) / segmenterRangeM,
       positiveWorkJ: work.positiveWorkJ,
       negativeWorkJ: work.negativeWorkJ,

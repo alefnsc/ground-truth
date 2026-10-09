@@ -4,7 +4,8 @@ import { analyzeSession, type PoseFrame, type SessionResult } from "../src/index
 import { lcg, syntheticSession } from "./helpers";
 
 // analyzeSession takes whatever an adapter produces. Bad DATA is refused with reasons and never
-// thrown on; only invalid OPTIONS (a negative mass, a cutoff above Nyquist) are programmer errors.
+// thrown on; only invalid OPTIONS (a negative mass, a cutoff of zero) are programmer errors. A cutoff the
+// stream's frame rate cannot carry is a property of the stream, and is refused.
 
 const SCALE = 2.5;
 const OPTIONS = { massKg: 10, gEnvMs2: G_ENV_MS2.EARTH, metersPerUnit: SCALE };
@@ -101,6 +102,34 @@ describe("analyzeSession: bad data is refused, not thrown on", () => {
   it("still throws a RangeError for invalid OPTIONS", () => {
     const f = session();
     expect(() => analyzeSession(f, { ...OPTIONS, massKg: -1 })).toThrow(RangeError);
-    expect(() => analyzeSession(f, { ...OPTIONS, cutoffHz: 40 })).toThrow(/cutoffHz/);
+    expect(() => analyzeSession(f, { ...OPTIONS, cutoffHz: 0 })).toThrow(/cutoffHz/);
+    expect(() => analyzeSession(f, { ...OPTIONS, cutoffHz: Number.NaN })).toThrow(/cutoffHz/);
+  });
+
+  // Whether a cutoff is below the Nyquist frequency depends on the STREAM's frame rate, which is frame
+  // content: cutoffHz 12 is fine at 30 fps and impossible at 23.976 fps. It is refused, never thrown on.
+  it("a cutoff at or above the stream's Nyquist frequency is refused with LOW_FRAME_RATE: 12 Hz at 23.976 fps, accepted at 30 fps", () => {
+    const film = analyzeSession(session({ rateHz: 23.976 }), { ...OPTIONS, cutoffHz: 12 });
+    expect(film.ok).toBe(false);
+    if (film.ok) return;
+    expect(film.reasons).toEqual(["LOW_FRAME_RATE"]);
+    expect(film.quality.reasons).toEqual(["LOW_FRAME_RATE"]);
+    expect(film.quality.rateHz).toBeCloseTo(23.976, 3);
+    expect(ok(analyzeSession(session({ rateHz: 30 }), { ...OPTIONS, cutoffHz: 12 })).reps).toHaveLength(3);
+    // under Nyquist is accepted, over it is not (60 fps: 30 Hz)
+    expect(analyzeSession(session(), { ...OPTIONS, cutoffHz: 29 }).ok).toBe(true);
+    expect(analyzeSession(session(), { ...OPTIONS, cutoffHz: 31 }).ok).toBe(false);
+  });
+
+  it("the Nyquist refusal joins the other reasons, in their usual order, and is not repeated", () => {
+    const noScale = analyzeSession(session(), { ...OPTIONS, metersPerUnit: null, cutoffHz: 40 });
+    expect(noScale.ok).toBe(false);
+    if (!noScale.ok) expect(noScale.reasons).toEqual(["NO_SCALE", "LOW_FRAME_RATE"]);
+    const slow = analyzeSession(session({ rateHz: 15 }), { ...OPTIONS, cutoffHz: 10 });
+    expect(slow.ok).toBe(false);
+    if (!slow.ok) expect(slow.reasons).toEqual(["LOW_FRAME_RATE"]);
+    const lost = analyzeSession(session().map((f, i) => (i >= 100 && i < 130 ? { ...f, visibility: 0.1 } : f)), { ...OPTIONS, cutoffHz: 40 });
+    expect(lost.ok).toBe(false);
+    if (!lost.ok) expect(lost.reasons).toEqual(["LOW_FRAME_RATE", "GAP_TOO_LONG"]);
   });
 });
