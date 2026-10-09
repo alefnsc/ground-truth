@@ -110,6 +110,18 @@ describe("lowPassZeroPhase", () => {
     expect(Math.abs((out[120] as number) - (lift[120] as number))).toBeLessThan(2e-3);
   });
 
+  it("a trace that starts half-way through a lift (non-zero slope at the edge) keeps its first sample within 1 mm", () => {
+    // Positions of a 0.5 m, 1 s minimum-jerk lift from t = 0.5 s (the peak-velocity point, 0.94 m/s) to 2.5 s,
+    // the position held at 0.5 m after t = 1 s. Point reflection (x[-j] = 2 x[0] - x[j]) keeps value and slope
+    // across the edge: first-sample error 0.00 mm. A mirror reflection (x[-j] = x[j]) measured 26.6 mm, and
+    // constant padding with the edge value is worse.
+    const trace = Array.from({ length: 121 }, (_, i) => 0.5 * minJerk(Math.min(1, 0.5 + i / FS)));
+    const out = lowPassZeroPhase(trace, FS, FC);
+    expect(Math.abs((out[0] as number) - (trace[0] as number))).toBeLessThan(1e-3);
+    // the slope at the far edge is zero (the lift is over), so that edge is easy; the near edge is the test
+    expect(Math.abs((out[1] as number) - (trace[1] as number))).toBeLessThan(2e-3);
+  });
+
   it("does not modify its input", () => {
     const x = sine(1);
     const copy = [...x];
