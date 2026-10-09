@@ -39,6 +39,18 @@ describe("cycle ergometer", () => {
     expect(work).toBeCloseTo(1352 + 3684, 6);
   });
 
+  it("applies the zero floor to each sample before integrating (a 0 W display at rest)", () => {
+    const work = ergometerWorkJ([
+      { tS: 0, displayedPowerW: 100 },
+      { tS: 10, displayedPowerW: 0 },
+      { tS: 20, displayedPowerW: 100 },
+    ]);
+    // actual 86.2 W, floored 0 W (not -11.8), 86.2 W:
+    //   10·(86.2 + 0)/2 + 10·(0 + 86.2)/2 = 862 J
+    // Integrating the unfloored power would give 10·(86.2 − 11.8)/2 × 2 = 744 J.
+    expect(work).toBeCloseTo(862, 6);
+  });
+
   it("rejects fewer than 2 samples, non-increasing time and non-finite power", () => {
     expect(() => ergometerWorkJ([{ tS: 0, displayedPowerW: 100 }])).toThrow(RangeError);
     expect(() =>
@@ -87,6 +99,11 @@ describe("treadmill with subject load device", () => {
     expect(treadmillEffectiveForceN(78.4, 9.81, 0)).toBeCloseTo(769.1, 1);
   });
 
+  it("adds the harness to body weight at partial gravity", () => {
+    // Mars, half a body weight of harness: 78.4 × 3.71 + 0.5 × 78.4 × 9.81 = 290.864 + 384.552
+    expect(treadmillEffectiveForceN(78.4, 3.71, 0.5)).toBeCloseTo(675.416, 3);
+  });
+
   it("rejects negative mass, non-finite arguments and a support fraction outside [0, 1]", () => {
     expect(() => treadmillEffectiveForceN(-1, 0, 0.5)).toThrow(/massKg/);
     expect(() => treadmillEffectiveForceN(78.4, Number.NaN, 0.5)).toThrow(RangeError);
@@ -116,6 +133,16 @@ describe("ARED", () => {
     expect(ARED_FLYWHEEL_EFFECTIVE_MASS_KG).toBeCloseTo(237.5, 1);
     expect(aredPeakForceN(2669, 0.762, 2)).toBeCloseTo(3562, 0);
     expect(Math.abs(aredPeakForceN(2669, 0.762, 2) - 3562)).toBeLessThan(1);
+  });
+
+  it("halves the inertial term when the stroke halves", () => {
+    // inertial 893 / 2 = 446.5 N on top of the 2669 N setting
+    expect(aredPeakForceN(2669, 0.381, 2)).toBeCloseTo(3115.5, 6);
+  });
+
+  it("adds the same inertial term at a different setting (the model assumes M_eff does not depend on the load)", () => {
+    // 1334.5 N (300 lbf) + the 893 N anchor term: documents the assumption as a tested property
+    expect(aredPeakForceN(1334.5, 0.762, 2)).toBeCloseTo(2227.5, 6);
   });
 
   it("quarters the inertial term when the rep period doubles", () => {

@@ -43,6 +43,35 @@ function jitteredCosineLift(heightM: number, durationS: number, hz: number): Sam
   return samples;
 }
 
+/** The first half of the lift, t in [0, T/2]: starts at rest, ends at the peak velocity. */
+function cosineLiftFirstHalf(heightM: number, durationS: number, hz: number): Sample[] {
+  return cosineLift(heightM, durationS, hz).slice(0, Math.round((durationS * hz) / 2) + 1);
+}
+
+/**
+ * Constant acceleration for 0.7 s, then constant (harder) deceleration for 0.3 s, ending at rest,
+ * sampled at 100 Hz so the switch falls on a sample. Piecewise quadratic, so the
+ * three-point second derivative is exact on every sample whose neighbours lie in one segment.
+ *   segment 1: a1 = +2 m/s² for 0.7 s    -> v1 = 1.4 m/s, y1 = 0.49 m
+ *   segment 2: a2 = -v1 / 0.3 = -14/3 m/s² for 0.3 s -> rest at t = 1 s
+ */
+const ASYM_A1_MS2 = 2;
+const ASYM_V1_MS = ASYM_A1_MS2 * 0.7;
+const ASYM_A2_MS2 = -ASYM_V1_MS / 0.3;
+function asymmetricStroke(): Sample[] {
+  const hz = 100;
+  const samples: Sample[] = [];
+  for (let i = 0; i <= hz; i++) {
+    const tS = i / hz;
+    const yM =
+      tS <= 0.7
+        ? 0.5 * ASYM_A1_MS2 * tS * tS
+        : 0.5 * ASYM_A1_MS2 * 0.49 + ASYM_V1_MS * (tS - 0.7) + 0.5 * ASYM_A2_MS2 * (tS - 0.7) ** 2;
+    samples.push({ tS, yM });
+  }
+  return samples;
+}
+
 const earthWorkJ = MASS_KG * G_ENV_MS2.EARTH * HEIGHT_M; // 49.05
 const withinRel = (actual: number, expected: number, rel: number) =>
   expect(Math.abs(actual - expected) / Math.abs(expected)).toBeLessThan(rel);
@@ -61,6 +90,46 @@ describe("trajectoryWork", () => {
     const r = trajectoryWork(cosineLift(HEIGHT_M, DURATION_S, 60), MASS_KG, G_ENV_MS2.EARTH);
     // 10 × (9.81 + 0.25 π²)
     withinRel(r.peakForceN, 122.77, 0.02);
+  });
+
+  it("first half of the lift (rest to moving): the inertial term adds energy, it does not subtract", () => {
+    const samples = cosineLiftFirstHalf(HEIGHT_M, DURATION_S, 60);
+    // Guard the test itself: it really is the half-lift, ending at the peak velocity.
+    expect(samples[0]!.tS).toBe(0);
+    expect(samples[samples.length - 1]!.tS).toBeCloseTo(0.5, 9);
+    // Earth: m·g·(h/2) + ½ m v², v = (h/2)(π/T)  =  10·9.81·0.25 + 3.084
+    const earth = trajectoryWork(samples, MASS_KG, G_ENV_MS2.EARTH);
+    withinRel(earth.netWorkJ, 27.609, 0.01);
+    withinRel(earth.positiveWorkJ, 27.609, 0.01);
+    expect(Math.abs(earth.negativeWorkJ)).toBeLessThan(0.05);
+    // ISS: only the kinetic energy given to the mass, ½ m v² = 3.084 J, and nothing is returned yet.
+    const iss = trajectoryWork(samples, MASS_KG, G_ENV_MS2.ISS);
+    withinRel(iss.positiveWorkJ, 3.084, 0.03);
+    expect(Math.abs(iss.negativeWorkJ)).toBeLessThan(0.05);
+  });
+
+  it("peak force on the ISS is m·a_max, with no gravity term", () => {
+    const r = trajectoryWork(cosineLift(HEIGHT_M, DURATION_S, 60), MASS_KG, G_ENV_MS2.ISS);
+    // 10 × 0.25 π²
+    withinRel(r.peakForceN, 24.67, 0.01);
+  });
+
+  it("peak force can be the braking force: |F| is taken, and the sign of a matters on Earth", () => {
+    // Deceleration (14/3 m/s²) is harder than acceleration (2 m/s²).
+    // Analytic force on a 10 kg mass, F = m (g + a):
+    //   g = 0 : accelerating  10 × 2     =  20.000 N
+    //           braking       10 × -14/3 = -46.667 N   -> peak |F| = 46.667 N (a negative force)
+    //   Earth : accelerating  10 × (9.81 + 2)     = 118.1 N
+    //           braking       10 × (9.81 - 14/3)  =  51.43 N
+    //           -> peak 118.1 N. Using g + |a| would give 10 × (9.81 + 14/3) = 144.77 N.
+    // Samples 71..99 lie wholly in the braking segment, 1..69 in the accelerating one, so the
+    // three-point acceleration is exact there and the peak is taken over interior samples.
+    const samples = asymmetricStroke();
+    const space = trajectoryWork(samples, MASS_KG, G_ENV_MS2.ISS);
+    expect(space.peakForceN).toBeCloseTo(MASS_KG * Math.abs(ASYM_A2_MS2), 6); // 46.667
+    expect(space.peakForceN).toBeGreaterThan(MASS_KG * ASYM_A1_MS2); // the braking force, not the accelerating one
+    const earth = trajectoryWork(samples, MASS_KG, G_ENV_MS2.EARTH);
+    expect(earth.peakForceN).toBeCloseTo(MASS_KG * (G_ENV_MS2.EARTH + ASYM_A1_MS2), 6); // 118.1
   });
 
   it("lift then lower on Earth: the lowering gives the work back", () => {
@@ -85,8 +154,14 @@ describe("trajectoryWork", () => {
   });
 
   it("sampling at 30 Hz still gives the Earth lift within 1 %", () => {
-    const r = trajectoryWork(cosineLift(HEIGHT_M, DURATION_S, 30), MASS_KG, G_ENV_MS2.EARTH);
+    const samples = cosineLift(HEIGHT_M, DURATION_S, 30);
+    const r = trajectoryWork(samples, MASS_KG, G_ENV_MS2.EARTH);
     withinRel(r.netWorkJ, earthWorkJ, 0.01);
+    // net work depends only on the end samples; the split and the peak depend on every node velocity
+    withinRel(r.peakForceN, 122.77, 0.02);
+    const iss = trajectoryWork(samples, MASS_KG, G_ENV_MS2.ISS);
+    withinRel(iss.positiveWorkJ, 3.084, 0.02);
+    withinRel(iss.negativeWorkJ, -3.084, 0.02);
   });
 
   it("non-uniform time steps (deterministic jitter) stay within 2 %", () => {
@@ -96,6 +171,28 @@ describe("trajectoryWork", () => {
     expect(Math.max(...steps) - Math.min(...steps)).toBeGreaterThan(0.004);
     const r = trajectoryWork(samples, MASS_KG, G_ENV_MS2.EARTH);
     withinRel(r.netWorkJ, earthWorkJ, 0.02);
+    withinRel(r.peakForceN, 122.77, 0.02);
+    const iss = trajectoryWork(samples, MASS_KG, G_ENV_MS2.ISS);
+    withinRel(iss.positiveWorkJ, 3.084, 0.03);
+    withinRel(iss.negativeWorkJ, -3.084, 0.03);
+  });
+
+  it("constant acceleration from rest is integrated exactly, on uniform and non-uniform time grids", () => {
+    // y = ½ a t², a = 2 m/s², over [0, 1] s: the three-point velocity is exact for a quadratic,
+    // so v_last = 2 m/s and the inertial work is ½ · 10 · 2² = 20 J with no discretisation error.
+    // (A forward-difference velocity is off by a·h/2 at both ends and misses this by ~1.7 % at 60 Hz;
+    // the cosine lifts cannot see that because their velocity is flat at the ends and the peak.)
+    const a = 2;
+    const quadratic = (times: number[]): Sample[] => times.map((tS) => ({ tS, yM: 0.5 * a * tS * tS }));
+    const uniform = quadratic(Array.from({ length: 61 }, (_, i) => i / 60));
+    const jittered = quadratic(Array.from({ length: 61 }, (_, i) => (i === 0 || i === 60 ? i / 60 : i / 60 + 0.003 * Math.sin(1.7 * i))));
+    for (const samples of [uniform, jittered]) {
+      const iss = trajectoryWork(samples, MASS_KG, G_ENV_MS2.ISS);
+      expect(iss.positiveWorkJ).toBeCloseTo(20, 9);
+      expect(iss.negativeWorkJ).toBeCloseTo(0, 9);
+      // Earth adds m·g·Δy = 10 · 9.81 · 1
+      expect(trajectoryWork(samples, MASS_KG, G_ENV_MS2.EARTH).netWorkJ).toBeCloseTo(98.1 + 20, 9);
+    }
   });
 
   describe("invalid input", () => {

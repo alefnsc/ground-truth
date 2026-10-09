@@ -112,6 +112,7 @@ describe("cumulativeDeficit", () => {
   });
 
   it("reports a surplus as a negative deficit", () => {
+    // (100 − 150) × 10 days = −500
     expect(
       cumulativeDeficit(
         [
@@ -120,7 +121,7 @@ describe("cumulativeDeficit", () => {
         ],
         100,
       ),
-    ).toBeLessThan(0);
+    ).toBe(-500);
   });
 
   it("a single point has no duration, so no deficit", () => {
