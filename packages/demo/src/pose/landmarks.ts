@@ -1,0 +1,67 @@
+/**
+ * Pose-model landmarks to the capture package's PoseFrame. Pure.
+ *
+ * The indices are the MediaPipe pose model's 33-landmark topology. The installed package's
+ * `PoseLandmarker.POSE_CONNECTIONS` confirms the pairing used here: its connection chains run
+ * 0-1-2-3-7 and 0-4-5-6-8 (eyes 2 and 5), 11-13-15 and 12-14-16 (wrists 15 and 16), and 23-25-27 and
+ * 24-26-28 (ankles 27 and 28). The package's types do not name the landmarks; the left and right
+ * names are from the model's documentation. Which is which does not matter to the maths, because the
+ * side is chosen by visibility (`pickSide`).
+ *
+ * y is passed through unchanged (normalised, pointing down): the capture package converts it, once.
+ */
+
+import type { PoseFrame } from "@ground-truth/capture";
+
+export const LANDMARK = { LEFT_EYE: 2, RIGHT_EYE: 5, LEFT_WRIST: 15, RIGHT_WRIST: 16, LEFT_ANKLE: 27, RIGHT_ANKLE: 28 } as const;
+
+export type Side = "LEFT" | "RIGHT";
+
+export interface Landmark {
+  x: number;
+  y: number;
+  visibility?: number;
+}
+
+/** A calibration landmark below this visibility is not read (the capture package's own visibility threshold is also 0.5). */
+export const CALIBRATION_MIN_VISIBILITY = 0.5;
+
+const LOST = (tS: number): PoseFrame => ({ tS, wristY: 0, visibility: 0 });
+
+/** Visibility as a number, 0 for anything that is not one: an unknown confidence is not trusted. */
+function visibilityOf(landmark: Landmark | undefined): number {
+  const v = landmark?.visibility;
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+/**
+ * The tracked wrist of one frame. No detection, a pose that stops before the wrist, or a wrist
+ * without a usable y is `visibility: 0` with `wristY: 0` (never the last position, never a high
+ * visibility). A wrist with no visibility field is also visibility 0.
+ */
+export function toPoseFrame(tS: number, landmarks: readonly Landmark[] | undefined, side: Side): PoseFrame {
+  const wrist = landmarks?.[side === "LEFT" ? LANDMARK.LEFT_WRIST : LANDMARK.RIGHT_WRIST];
+  if (!wrist || !Number.isFinite(wrist.y)) return LOST(tS);
+  return { tS, wristY: wrist.y, visibility: visibilityOf(wrist) };
+}
+
+/** The wrist with the higher mean visibility over the samples (a frame with no detection counts 0). LEFT on a tie or with no samples. */
+export function pickSide(samples: readonly (readonly Landmark[])[]): Side {
+  let left = 0;
+  let right = 0;
+  for (const landmarks of samples) {
+    left += visibilityOf(landmarks[LANDMARK.LEFT_WRIST]);
+    right += visibilityOf(landmarks[LANDMARK.RIGHT_WRIST]);
+  }
+  return right > left ? "RIGHT" : "LEFT";
+}
+
+/** The eye and ankle heights of the chosen side, for the stature method; null when either landmark is missing or under 0.5 visibility. */
+export function calibrationFromLandmarks(landmarks: readonly Landmark[], side: Side): { eyeY: number; ankleY: number } | null {
+  const eye = landmarks[side === "LEFT" ? LANDMARK.LEFT_EYE : LANDMARK.RIGHT_EYE];
+  const ankle = landmarks[side === "LEFT" ? LANDMARK.LEFT_ANKLE : LANDMARK.RIGHT_ANKLE];
+  if (!eye || !ankle) return null;
+  if (visibilityOf(eye) < CALIBRATION_MIN_VISIBILITY || visibilityOf(ankle) < CALIBRATION_MIN_VISIBILITY) return null;
+  if (!Number.isFinite(eye.y) || !Number.isFinite(ankle.y)) return null;
+  return { eyeY: eye.y, ankleY: ankle.y };
+}
