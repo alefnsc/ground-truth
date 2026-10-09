@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Energy and load are different quantities. Compare them across Earth, Moon, Mars and ISS gravity, and measure a lifting set from a camera or a video file." />
+    <title>Ground Truth</title>
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <h1>Ground Truth</h1>
+      <p class="lede">Energy and load are different quantities. On Earth gravity couples them; in orbit it does not.</p>
+    </header>
+
+    <div class="tabs" role="tablist" aria-label="Views">
+      <button type="button" role="tab" id="tab-currencies" aria-controls="panel-currencies" aria-selected="true" tabindex="0">Two currencies</button>
+      <button type="button" role="tab" id="tab-capture" aria-controls="panel-capture" aria-selected="false" tabindex="-1">Capture</button>
+    </div>
+
+    <main id="main">
+      <section id="panel-currencies" role="tabpanel" aria-labelledby="tab-currencies" tabindex="0">
+        <p class="placeholder">The two-currencies view goes here.</p>
+      </section>
+      <section id="panel-capture" role="tabpanel" aria-labelledby="tab-capture" tabindex="0" hidden>
+        <p class="placeholder">The capture view goes here.</p>
+      </section>
+    </main>
+  </body>
+</html>
