@@ -24,7 +24,7 @@ const seeds = (n: number): number[] => Array.from({ length: n }, (_, i) => i + 1
 
 describe("height × tempo grid: minimum-jerk lift and lowering of the same duration, 3 s rests, no noise", () => {
   // Measured loss of work (positive, negative and range of motion agree to 0.1 point), in percent.
-  // Columns: 1, 2, 4, 6 and 8 s per phase. The previous rule read -84 to -96 % in the seven cells from
+  // Columns: 1, 2, 4, 6 and 8 s per phase. The previous rule read -84 to -96 % in the six cells from
   // 0.15 m × 4 s, 0.25 m × 6 s and 0.5 m × 8 s on.
   const TEMPOS_S = [1, 2, 4, 6, 8] as const;
   const MEASURED_LOSS_PERCENT: Record<string, readonly number[]> = {

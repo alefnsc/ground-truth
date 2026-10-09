@@ -17,14 +17,17 @@ npm run typecheck -w @ground-truth/capture
 ```
 
 ```ts
-import { analyzeSession, metersPerUnitFromStature, type PoseFrame } from "@ground-truth/capture";
+import { analyzeSession, metersPerUnitFromKnownLength, type PoseFrame } from "@ground-truth/capture";
 
 // frames: PoseFrame[] = { tS, wristY, visibility }[]  (see "Adapter contract")
-const metersPerUnit = metersPerUnitFromStature(1.8, eyeY, ankleY); // from an upright side-on calibration frame
+// Calibration: an object of known length (here a 0.30 m ruler) held vertically in the lifting hand,
+// its two ends read in one frame. See "Scale" for why this is preferred to the stature method.
+const metersPerUnit = metersPerUnitFromKnownLength(0.3, rulerTopY, rulerBottomY);
 const r = analyzeSession(frames, { massKg: 20, gEnvMs2: 9.81, metersPerUnit });
 
 if (r.ok) {
-  // { startS, durationS, liftDurationS, filterLimited, rangeOfMotionM, positiveWorkJ, negativeWorkJ, peakForceN, impulseNs }[]
+  // { startS, durationS, liftDurationS, filterLimited, rangeOfMotionM, pathLengthM, trimmedRangeFraction,
+  //   positiveWorkJ, negativeWorkJ, peakForceN, impulseNs }[]
   r.reps;
   r.totalPositiveWorkJ; r.maxPeakForceN;
   r.provenance; // { loadSource: "CAMERA", confidence: "MEDIUM" | "LOW" }  (grades capture conditions, not accuracy)
@@ -38,8 +41,34 @@ quality diagnostics (frame rate, lost-frame fraction, longest gap, duration, dro
 frames) and no work, force, range of motion or provenance. **No frame content can make
 `analyzeSession` throw**: NaN, infinities, duplicate or out-of-order timestamps and
 timestamps in the wrong unit are refused or dropped. Invalid *options* (a negative mass,
-a cutoff above Nyquist, a threshold outside its range) are programmer errors and throw
-a `RangeError` naming the argument.
+a cutoff that is not a positive number, a threshold outside its range) are programmer
+errors and throw a `RangeError` naming the argument. A cutoff the stream's frame rate
+cannot carry (at or above half of it: 12 Hz is fine at 30 fps and impossible at 23.976)
+depends on the frames, so it is a refusal, `LOW_FRAME_RATE`.
+
+## Capture protocol
+
+The package separates a repetition from what surrounds it by **pauses**, and by nothing
+else. It cannot tell a pick-up from a lift unless the weight stops in between. So:
+
+1. **Hold the weight still for about a second before the first rep**, after picking it
+   up, at the height the reps start from.
+2. **Pause for about a second after the last rep, before setting the weight down.**
+3. **Stand side-on to the camera**, with the whole movement in the frame.
+4. **Start and stop the recording while still.**
+5. Rests between reps are optional, and any length. A hesitation inside a lift is fine.
+
+A pause counts when it lasts 0.3 s with the wrist still (under about 2 cm/s); a second
+gives margin. What happens otherwise, **measured on synthetic signals** (0.5 m curls of
+1 s, a 0.6 m pick-up and set-down, 60 Hz):
+
+| Departure from the protocol | What the affected rep reads | Does anything signal it? |
+|---|---|---|
+| Set-down straight after the last lowering, no pause | Negative work **+120 %** (lowering, then at once a 0.6 m set-down) to **+178 %** (one movement from the top to the floor). Positive work and range of motion are right (−0.5 %). | `trimmedRangeFraction` 0.45 |
+| Pick-up straight into the first curl, no pause | Range of motion and positive work **+120 %** (1.10 m for a 0.5 m curl), start 1.1 s early. Negative work is right. | No: `trimmedRangeFraction` reads 1.00 |
+| Pick-up and first curl as one movement from the floor | Range of motion and positive work +120 %: the whole 1.10 m is one lift. | No |
+| Recording starts mid-lift, or stops mid-lowering | The visible part is counted as a rep; work, range and duration are partial. | No |
+| Movement not side-on | Reads as less range of motion. | No |
 
 ## Adapter contract
 
@@ -68,7 +97,7 @@ not here) must produce:
 | 3 | `toMetersUp` | The one place where image coordinates (y down) become metres (y up): `yM = −wristY · metersPerUnit`, first sample 0. |
 | 4 | `lowPassZeroPhase` | 2nd-order Butterworth, forward then backward, 4 Hz by default. A recording not longer than the filter's padding is refused `TOO_SHORT`. |
 | 5 | `segmentReps` | Displacement hysteresis on position extrema. |
-| 6 | rep window | Each rep is trimmed to its movement: pauses are detected, and the lift starts where the position leaves the pause's rest level, the lowering ends where it reaches the next pause's rest level. |
+| 6 | rep window | Each rep is trimmed to its movement, between the pause before the top and the pause after it whose rest levels agree: the lift starts where the position leaves the first pause's rest level, the lowering ends where it reaches the second's. |
 | 7 | `trajectoryWork` | Per trimmed rep, from `@ground-truth/physics`, with the optional constant device force. |
 
 ### Refusal reasons and thresholds
@@ -80,7 +109,7 @@ unchanged).
 | Reason | Refused when | Constant |
 |---|---|---|
 | `NO_SCALE` | `metersPerUnit` is `null` | |
-| `LOW_FRAME_RATE` | median frame rate < 20 Hz, or the timestamps are so irregular that the grid would hold over 4 samples per delivered frame | `MIN_RATE_HZ` |
+| `LOW_FRAME_RATE` | median frame rate < 20 Hz, or the timestamps are so irregular that the grid would hold over 4 samples per delivered frame, or `cutoffHz` is at or above half the median frame rate | `MIN_RATE_HZ` |
 | `LANDMARK_LOST` | more than 10 % of frames have visibility < 0.5 (or a non-finite `wristY`), or more than 10 % were dropped for their timestamps | `MAX_LOW_VISIBILITY_FRACTION`, `VISIBILITY_THRESHOLD` |
 | `GAP_TOO_LONG` | more than 0.25 s between usable frames | `MAX_GAP_S` |
 | `TOO_SHORT` | recording under 1.0 s, or no longer than the filter padding (`ceil(3·rate/cutoff)` samples, 90 at 60 Hz with a 2 Hz cutoff) | `MIN_DURATION_S`, `PADDING_CUTOFF_PERIODS` |
@@ -119,72 +148,154 @@ so 29.97 and 30.3 grade alike, and 59.94 and 50).
 rest before it, a pick-up from the floor, or a set-down to the rep (the first version of
 this package read a dumbbell picked up from the floor as 1.10 m and 108.5 J for a 0.5 m,
 49.05 J curl, and rest noise added 7 to 19 % after a 10 s rest). `analyzeSession` trims
-each rep on the **smoothed** position (so noise does not make a pause look shorter than
-it is):
+each rep on the **smoothed** position, to the movement between two pauses: one before
+the top, where the lift starts, and one after it, where the lowering ends.
 
-1. A *pause* is a run of at least `DWELL_MIN_S` = 0.3 s in which the smoothed position
-   spreads (highest minus lowest) no more than `DWELL_BAND_M` = 1.5 cm. Both are judgement
-   calls and are not tuned to any scenario. They only *detect* a pause: a run stays inside
-   the band until the movement has already travelled up to 1.5 cm, so the pause's edge
-   is not where the movement starts.
-2. **Onset.** Walk back from the top, first stepping over the top plateau (every sample
-   within 1.5 cm of the top), so a pause *at* the top is never mistaken for the pause
-   before the lift. Take the latest pause before that. Its **rest level** is the median
-   of the first half of its samples, which the coming lift has not reached; the lift
-   starts at the last sample of the pause within `ONSET_TOLERANCE_M` = 3 mm of that level.
-   A pause half-way up (a barbell racked at the shoulders, then pressed) counts: the
-   press starts where it leaves that level.
-3. **Offset.** Walk forward from the top, over the top plateau, to the first pause. Its
-   rest level is the median of the *second* half of its samples; the lowering ends at the
-   first sample of the pause within `ONSET_TOLERANCE_M` of that level. A pause at the top
-   stays *inside* the window (between the lift and the lowering); nothing is cut there.
-4. If there is no pause (reps with no rest between them) the segmenter's boundary is kept.
-5. Work, peak force, impulse, path length, `startS`, `durationS`, `liftDurationS` and
-   `rangeOfMotionM` are all computed on the trimmed window. `liftDurationS` is onset to
-   top; `durationS` is onset to offset.
+**What a pause is.** A run of at least `DWELL_MIN_S` = 0.3 s in which the smoothed
+position spreads (highest minus lowest) no more than `DWELL_BAND_M` = 1.5 cm, and which
 
+1. **lies below the movement**: its rest level is at least `minPhaseDisplacementM`
+   (10 cm, the threshold the segmenter uses to call something a phase) under the rep's
+   top. A pause *at* the top is never a boundary, however long: it stays inside the rep,
+   between the lift and the lowering.
+2. **is actually at rest**: the half of it away from the movement (the first half before
+   a lift, the second half after a lowering) travels no more than `ONSET_TOLERANCE_M` =
+   3 mm. Slow movement fits inside 1.5 cm for 0.3 s anywhere along its way; without this
+   test it was read as a pause.
+
+**Which pauses.** There may be several on each side of the top: the rest, a hesitation
+half-way, the pause after a pick-up. *A rep starts from and returns to roughly the same
+height*, so the two that bound it are **the pair whose rest levels agree**:
+
+- A sticking point half-way up has no pause at its height on the way down. The rests at
+  the bottom agree, so the rep is whole.
+- A barbell racked at the shoulders and then pressed returns to the shoulders. The two
+  pauses at the shoulders agree, so the press is the rep and the clean is not.
+- A pick-up from the floor followed by a pause is matched by the return to that pause's
+  height, so the pick-up is not part of the first rep (nor the set-down of the last).
+- A rep that does not come back to where it started has one height on each side and
+  simply uses them.
+
+Agreement is judged to `DWELL_BAND_M`: the pair with the smallest difference in level
+is the best, every pair within 1.5 cm of it agrees equally, and of those the **smallest
+window** wins (the latest start with the earliest end). The tolerance is needed because
+the levels inside one rest differ by fractions of a millimetre, and an exact minimum
+then falls on an arbitrary instant deep inside the rests, billing them to the rep; it is
+1.5 cm and not 3 mm because a hand that drifts a centimetre or two while it rests would
+otherwise find its exact match seconds before the lift. If one side has no pause at all
+(reps with no rest between them, a lowering that runs straight into the set-down) the
+segmenter's boundary is kept on that side.
+
+**Where in the pause the boundary goes.** The 1.5 cm band only *detects* the pause: a
+run stays inside it until the movement has already travelled up to 1.5 cm. The pause's
+**rest level** is the median of its still half, and the lift starts at the last sample
+of the pause within `ONSET_TOLERANCE_M` of that level (the lowering ends at the first).
 `ONSET_TOLERANCE_M` is a judgement call sized to the residual noise of the smoothed
-signal (a few tenths of a millimetre for ±2 mm input noise, about 1 mm for ±5 mm); it was
-not tuned to any test. Because the boundary can only fall between the true rest and the
-pause's edge, a pause that is contaminated by the movement (it follows a movement at once,
-or the lift is slow enough to begin inside the window) leaves the boundary no worse than
-the edge was; over 558 reps of lifts of 0.6 to 4 s, rests of 0 to 3 s, noise to ±5 mm and
-heights of 0.15 to 0.5 m, no rep's work or range-of-motion error grew by more than 0.05
-points, bar one whose range of motion went from −0.5 % to +0.8 % by the filter's
-pre-ringing. If no sample of the pause is within the tolerance of its level, the pause's
-edge sample is used; this never happened in the test suite or in that sweep.
+signal (a few tenths of a millimetre for ±2 mm input noise, about 1 mm for ±5 mm).
 
-**Residual bias, measured by the tests on synthetic sessions** (0.5 m, 1 s minimum-jerk
-lift, 1 s lowering): the first and last `ONSET_TOLERANCE_M` of the movement are judged
-rest, which a minimum-jerk lift takes 0.08 s to cover. So range of motion reads about
-`ONSET_TOLERANCE_M / ROM` short and work a little more (**work −0.5 %, range of motion
-−0.4 %** at 0.5 m; −0.8 % and −0.7 % at 0.25 m, so it no longer grows as the movement
-gets shorter), `startS` reads **0.07 to 0.10 s late**, and `durationS` **0.10 to 0.18 s
-short** for a 2 s rep. The time error grows with the lift (a slower lift takes longer to
-cover 3 mm: about 0.5 s late at the start of a 4 s lift) and is the one place the finding's
-0.15 s is not met: `durationS` is two such errors, and the tests assert 0.2 s. While the
-boundary sat at the pause's edge (1.5 cm) these were work −3.2 %, range of motion −2.6 %
-(7.5 % of a 0.2 m movement), 0.13 to 0.15 s late and 0.27 to 0.30 s short. A real lift is
-not minimum-jerk, so these are the bias of the method on an idealised profile, not a
-prediction.
+Work, peak force, impulse, `pathLengthM`, `startS`, `durationS` and `rangeOfMotionM` are
+all computed on the trimmed window. **`liftDurationS`** runs from the start to the *first*
+sample within 3 mm of the top's level, so a pause at the top is not part of the lift.
+**`trimmedRangeFraction`** is the range of motion measured divided by the range the
+segmenter saw for that rep (its top minus the lower of its two ends): about 1 for a rep
+between two rests, 0.45 for a 0.5 m curl after a 0.6 m pick-up, and low when slow
+movement was trimmed as rest. It has no threshold and raises no flag; a consumer can
+show "this rep was measured over 45 % of the detected movement".
 
-Limits of the trimming, by design or by measurement:
+All three constants are judgement calls, none tuned to a scenario, and each is held by
+a test that fails if it is halved and one that fails if it is doubled.
 
+#### Residual bias on ordinary reps (measured, synthetic)
+
+0.5 m, 1 s minimum-jerk lift, 1 s lowering: the first and last 3 mm of the movement are
+judged rest, which a minimum-jerk lift takes 0.08 s to cover. **Work −0.5 %, range of
+motion −0.4 %** (−0.8 % and −0.7 % at 0.25 m). `startS` reads **0.07 to 0.10 s late**
+at ±2 mm (0.02 to 0.12 s at ±5 mm) and `durationS` **0.13 to 0.18 s short** for a 2 s rep
+(0.08 to 0.20 s at ±5 mm; the tests hold 0.135 s and 0.22 s over 30 seeds). `liftDurationS`
+reads **0.85 s for a 1 s lift** (0.83 to 0.88 s over 100 seeds at ±2 mm, with or without a
+pause at the top). A real lift is not minimum-jerk, so these are the bias of the method
+on an idealised profile, not a prediction.
+
+#### Tempo limits: slow movement (measured, synthetic)
+
+Anything slower than `ONSET_TOLERANCE_M` in half of `DWELL_MIN_S`, about **2 cm/s**, is
+a rest to test 2. That floor is inherent to the rule. The slow first and last
+centimetres of a slow rep are therefore trimmed with the rests, and the loss grows as
+the movement gets slower and shorter. Loss of work for a minimum-jerk lift and lowering
+of the same duration, 3 s rests, 60 Hz (positive work, negative work and range of
+motion agree to 0.1 point; `trimmedRangeFraction` reads one minus the loss):
+
+| Height | 1 s per phase | 2 s | 4 s | 6 s | 8 s |
+|---|---|---|---|---|---|
+| 0.15 m, no noise | −1.3 % | −2.7 % | −5.5 % | −9.5 % | **−15.0 %** |
+| 0.25 m, no noise | −0.8 % | −1.3 % | −2.7 % | −4.2 % | −6.1 % |
+| 0.5 m, no noise | −0.5 % | −0.5 % | −1.1 % | −1.5 % | −2.2 % |
+| 0.15 m, ±2 mm (worst of 20 seeds) | −2.8 % | −3.7 % | −7.0 % | −13.8 % | **−31.5 %** |
+| 0.25 m, ±2 mm | −1.4 % | −1.9 % | −3.7 % | −5.5 % | −10.3 % |
+| 0.5 m, ±2 mm | −0.7 % | −0.8 % | −1.3 % | −2.1 % | −3.2 % |
+| 0.15 m, ±5 mm (worst of 20 seeds) | −3.4 % | −5.7 % | −10.2 % | **−31.7 %** | **−28.2 %** |
+| 0.25 m, ±5 mm | −2.5 % | −1.8 % | −4.9 % | −11.7 % | −15.4 % |
+| 0.5 m, ±5 mm | −1.2 % | −0.9 % | −1.5 % | −2.5 % | −3.8 % |
+
+(The rule this replaced read −84 to −96 % in six of the fifteen no-noise cells: from
+4 s at 0.15 m, 6 s at 0.25 m and 8 s at 0.5 m.) **A 0.15 m movement taking 6 s or more
+per phase loses up to a third of its work once there is noise**, with
+`trimmedRangeFraction` at 0.63 to 0.85 as the only sign. Its peak speed is 3.5 to
+4.7 cm/s, barely above the floor. The timing errors grow the same way: a 0.5 m lift of
+2, 4 and 8 s starts 0.17, 0.43 and 1.12 s late and its rep reads 0.33, 0.87 and 2.23 s
+short.
+
+When only one half is slow (0.2 m, 1 s one way and 5 s the other) the fast half reads
+−1.4 % and the slow half −4.7 % (to −6.6 % at ±2 mm and −8.5 % at ±5 mm over 20 seeds).
+
+Constant-speed movement has no fast middle, so it shows the floor directly. Up and down
+0.3 m at a constant speed, 3 s rests, work:
+
+| Speed | No noise | ±2 mm (worst of 20 seeds) | ±5 mm |
+|---|---|---|---|
+| 12 cm/s | −0.9 % | −1.0 % | −0.5 % |
+| 8 cm/s | −1.3 % | −0.9 % | −0.3 % |
+| 5 cm/s | −1.3 % | −1.5 % | −1.2 % |
+| 3 cm/s | −1.7 % | **−65.8 %** | **−67.1 %** |
+| 2 cm/s | **−67.7 %** | **−67.4 %** | **−65.7 %** |
+
+Below the floor the rep collapses to the last 10 cm under the top (`trimmedRangeFraction`
+0.32 here; −80 % over 0.5 m). **With noise the floor for constant-speed movement is
+between 3 and 5 cm/s.** (The previous rule collapsed at 5 cm/s and below, to −91 to −97 %.)
+
+#### Known failure modes of the pair-matching rule (measured, synthetic)
+
+- **A stop on the way up *and* one at the same height on the way down** is a rack as far
+  as this rule can tell: only the part above them is measured (0.35 s stops at 0.25 m in
+  a 0.5 m rep: range of motion and both works −50 %, `trimmedRangeFraction` 0.50). Stops
+  at different heights (0.25 m up, 0.15 m down) do not match, and the rep is whole.
+- **A stop on the way up in a rep that does not return to its start height** wins if it
+  is nearer the return height than the start is (stop at 0.25 m, return to +0.15 m:
+  range of motion and positive work −50 %, `trimmedRangeFraction` 0.50).
+- **A stop within 1.5 cm of the rest's height** is the same height: the rep ends (or
+  starts) there, and the last centimetre is left out (a 0.6 s stop 1 cm above the start
+  on the way down: negative work −2.4 %; 2 cm above, the rep runs on to the rest).
+- **A hand that sways by more than 1.5 cm between two rests.** The pauses nearest the rep
+  no longer agree, and the window reaches into the rest for one that does. A 2 cm sway
+  at 0.2 Hz under 0.5 m reps: the rep reads up to 1.1 s long (1.35 s at ±5 mm) and its
+  positive work +4.2 % (+5.8 %), which is the sway's own rise. The previous rule read
+  this case within 1.3 % and 0.22 s. A drift of 1 cm/s during 5 s rests, or a hand that
+  rises or sinks 2 cm in the rest and returns 1 cm off, stays within 1.2 % and 0.2 s.
+- **A rep that does not return to its start height, with an earlier pause at the return
+  height** still inside the segmenter's rep: the window is extended back to that pause.
+- **No pause before the set-down or after the pick-up**: see "Capture protocol".
 - A **sub-threshold movement** (under 10 cm) between two reps is attributed to neither
-  rep when a pause separates it from each of them (tested: a 0.08 m partial between two
-  full reps, with 0.6 s pauses either side, leaves both reps within 5 %). When no pause
-  separates it from a rep — it follows the lowering at once — it stays in that rep and
-  its work is added to it, as before.
-- A **pause of 0.3 s or more inside a lift** splits it: only the part after the last such
-  pause is measured (that is what lets the rack-to-shoulders press work, and what costs a
-  sticking-point pause its first half).
-- The junction between two reps with no rest is borderline for a pause when a lift is
-  about 1 s (the position is within 1.5 cm for 0.29 s). When it is taken for one, the
-  boundary falls between the movement and the edge (middle rep: work −0.9 %, start 0.10 s
-  late); otherwise the segmenter's boundary is kept. Either result is within the same
-  band of error.
-- A top that **drifts** down slowly (a few cm over a second) leaves no plateau to step
-  over, so the lowering can be cut short.
+  rep when a pause separates it from each of them (a 0.08 m partial between two full
+  reps, with 0.6 s pauses either side, leaves both reps within 0.8 % at ±2 mm). When no pause
+  separates it from a rep it stays in that rep and its work is added to it.
+- **Reps with no rest between them**: the turnaround at the bottom is borderline for a
+  pause when a lift is about 1 s. When it is taken for one the boundary falls 3 mm into
+  the movement, otherwise the segmenter's boundary is kept; either way work is within
+  0.7 % at ±2 mm and 1.2 % at ±5 mm.
+- **`liftDurationS` at ±5 mm with a pause at the top**: the top's level is the highest
+  sample of a noisy plateau, and a 1 s lift then reads up to 1.15 s (0.85 s without
+  noise); one 0.4 s lift in a hundred read over the `filterLimited` threshold. At ±2 mm
+  it holds to one sample over 100 seeds.
 
 ### Behaviour worth knowing
 
@@ -209,11 +320,15 @@ Limits of the trimming, by design or by measurement:
 The default cutoff is 4 Hz at the **−6 dB point of the two-pass filter** (gain exactly
 0.5 at 4 Hz). Its −3 dB point is `0.802 × fc` ≈ 3.2 Hz. The default suits lifts of about
 0.8 s or slower; a faster lift is shaped by the filter. Each rep reports
-`filterLimited: true` when `liftDurationS` is under `FILTER_LIMITED_LIFT_S` = 0.7 s
-(measured in review). `liftDurationS` is taken on the trimmed window, so it reads about
-8 % under a 1 s lift's full time (0.92 s; 6 % under at 0.6 s): 0.7 s here is a lift of
-about 0.77 s. (Trimmed at the pause's edge it read 14 % under, and 0.7 s was a lift of
-about 0.8 s.)
+`filterLimited: true` when `liftDurationS` is under `FILTER_LIMITED_LIFT_S` = 0.65 s.
+`liftDurationS` leaves out the first and the last 3 mm of the lift, so it reads about
+15 % under the full time of a 0.5 m lift (measured: 1.0 s reads 0.850, 0.9 s 0.767, 0.8 s
+0.683, 0.75 s 0.650, 0.7 s 0.617, 0.6 s 0.533): **0.65 s is a 0.5 m lift of about 0.75 s**,
+and a 0.8 s lift, which the table below shows within half a percent, is not flagged. A
+shorter movement reads shorter still, because 3 mm is a larger share of it (1.0 s over
+0.25 m reads 0.800 s, over 0.15 m 0.767 s), so the flag fires under about 0.8 s at 0.25 m
+and 0.85 s at 0.15 m. (The constant was 0.7 while `liftDurationS` ran to the top sample
+and read 8 % under; at 0.7 it would now flag 0.8 s lifts.)
 
 Filter bias on a 0.5 m lift with zero noise at 60 Hz, 4 Hz cutoff, **measured in review
 on synthetic signals, before the rep window was trimmed** (signed, against the rep's
@@ -236,7 +351,7 @@ few tenths of a percent for a ~1 s lift (+0.27 %), and 0.94 % and 1.99 % at 0.6 
 
 The same lifts after the window trim, measured by the tests' scenarios against a 2000 Hz
 reference of the same rep (the 1.0 s row's −0.5 % is the window residual above, not the
-filter):
+filter; unchanged by the pair-matching rule):
 
 | Lift time | Work | Peak force | Range of motion |
 |---|---|---|---|
@@ -252,39 +367,47 @@ range of motion.)
 
 ## Measured errors (synthetic, not real video)
 
-Every number below was measured with the scenarios of `test/session.test.ts` and
-`test/window.test.ts` on **synthetic sessions**: a 10 kg load, 0.5 m minimum-jerk lifts
-of 1 s with 1 s lowerings and 0.5 s rests (5 s and 10 s in the rows that say so), Earth
-gravity, positions with uniform ±noise from a seeded generator (`test/helpers.ts`).
-The pose model, a real camera and a real arm are not in the loop, so these are lower
-bounds on what real video will do. Truth per rep: positive work 49.05 J, peak force
-126.97 N, range of motion 0.5 m. Errors are the largest over the reps (and seeds) of the
-session, signed as measured minus truth. This table was regenerated after the rep
-boundary was moved from the pause's edge to the rest level (the work and range-of-motion
-columns read −3 % and −2.6 % before; peak force did not move); the first version of the
-package, whose windows ran minimum to minimum, read work +0.4 to +0.9 % in the first rows.
+Every number below was measured with the scenarios of `test/session.test.ts`,
+`test/window.test.ts` and `test/rep-window.test.ts` on **synthetic sessions**: a 10 kg
+load, 0.5 m minimum-jerk lifts of 1 s with 1 s lowerings and 0.5 s rests (5 s and 10 s in
+the rows that say so), Earth gravity, positions with uniform ±noise from a seeded
+generator (`test/helpers.ts`). The pose model, a real camera and a real arm are not in
+the loop, so these are lower bounds on what real video will do. Truth per rep: positive
+work 49.05 J, peak force 126.97 N, range of motion 0.5 m. Errors are the largest over the
+reps (and seeds) of the session, signed as measured minus truth. This table was
+regenerated after the pauses that bound a rep came to be chosen by matching rest levels;
+for these ordinary reps the numbers moved by a few hundredths of a point at most (the
+boundary inside a pause is placed as before), and the four sticking-point rows read
+−50 % in work or range of motion under the previous rule.
 
 | Scenario | Reps | Work | Peak force | Range of motion | Confidence (uncapped) |
 |---|---|---|---|---|---|
 | 60 Hz, no noise | 3 | −0.46 % | −0.01 % | −0.37 % | MEDIUM (HIGH) |
-| 60 Hz, ±2 mm (seed 1) | 3 | −0.47 % | +1.26 % | −0.36 % | MEDIUM (HIGH) |
+| 60 Hz, ±2 mm (seed 1) | 3 | −0.47 % | +1.27 % | −0.36 % | MEDIUM (HIGH) |
 | 60 Hz, ±2 mm (five seeds, worst) | 3 | −0.73 % | +2.58 % | −0.65 % | MEDIUM (HIGH) |
 | 30 Hz, ±2 mm | 3 | −0.36 % | +2.02 % | −0.33 % | MEDIUM (MEDIUM) |
 | 60 Hz, ±5 mm (seed 1) | 3 | −0.66 % | +3.42 % | −0.53 % | MEDIUM (HIGH) |
-| 60 Hz, ±5 mm (seed 2) | 3 | −0.42 % | +6.71 % | −0.35 % | MEDIUM (HIGH) |
-| 60 Hz, ±2 mm, 4 % of frames lost | 3 | −0.47 % | +1.46 % | −0.36 % | MEDIUM (MEDIUM) |
+| 60 Hz, ±5 mm (seed 2) | 3 | −0.42 % | +6.72 % | −0.35 % | MEDIUM (HIGH) |
+| 60 Hz, ±2 mm, 4 % of frames lost | 3 | −0.47 % | +1.47 % | −0.36 % | MEDIUM (MEDIUM) |
 | 5 reps, ±2 mm (seeds 3, 17, 99; worst) | 5, 5, 5 | −0.73 % | +2.34 % | −0.65 % | MEDIUM (HIGH) |
-| 5 s rests, ±2 mm (seeds 1–3, worst) | 3 | −0.44 % | +2.77 % | −0.34 % | MEDIUM (HIGH) |
-| 5 s rests, ±5 mm (seeds 1–3, worst) | 3 | −0.69 % | +6.94 % | −0.53 % | MEDIUM (HIGH) |
-| 10 s rests, ±2 mm (seeds 1–3, worst) | 3 | −0.60 % | +1.45 % | −0.53 % | MEDIUM (HIGH) |
-| 10 s rests, ±5 mm (seeds 1–3, worst) | 3 | −0.82 % | +4.22 % | −0.76 % | MEDIUM (HIGH) |
-| Floor pick-up, pause, 3 curls, set-down, ±2 mm | 3 | −0.43 % | +2.07 % | −0.34 % | MEDIUM (HIGH) |
-| Rack to shoulders, 2 presses, un-rack, ±2 mm | 2 | −0.18 % | +1.58 % | −0.14 % | MEDIUM (HIGH) |
-| 0.08 m partial between 2 reps, ±2 mm | 2 | −0.43 % | +1.20 % | −0.34 % | MEDIUM (HIGH) |
-| ISS, 1000 N device force, ±2 mm (vs 500 J, 1028.9 N) | 3 | −0.37 % | +0.15 % | −0.36 % | MEDIUM (HIGH) |
+| 5 s rests, ±2 mm (30 seeds, worst) | 3 | −0.62 % | +2.97 % | −0.54 % | MEDIUM (HIGH) |
+| 5 s rests, ±5 mm (30 seeds, worst) | 3 | −0.83 % | +7.54 % | −0.76 % | MEDIUM (HIGH) |
+| 10 s rests, ±2 mm (30 seeds, worst) | 3 | −0.72 % | +3.70 % | −0.56 % | MEDIUM (HIGH) |
+| 10 s rests, ±5 mm (30 seeds, worst) | 3 | −1.11 % | +9.38 % | −0.80 % | MEDIUM (HIGH) |
+| Floor pick-up, pause, 3 curls, set-down, ±2 mm (10 seeds, worst) | 3 | −0.55 % | +2.46 % | −0.47 % | MEDIUM (HIGH) |
+| Rack to shoulders, 2 presses, un-rack, ±2 mm (10 seeds, worst) | 2 | −0.58 % | +2.12 % | −0.48 % | MEDIUM (HIGH) |
+| 0.08 m partial between 2 reps, ±2 mm (10 seeds, worst) | 2 | −0.55 % | +2.27 % | −0.47 % | MEDIUM (HIGH) |
+| 0.2 s stop half-way up, ±2 mm (10 seeds, worst; peak vs 155.8 N) | 1 | +0.58 % | −3.84 % | −0.24 % | MEDIUM (HIGH) |
+| 0.35 s stop half-way up, ±2 mm (10 seeds, worst) | 1 | +0.62 % | −3.49 % | −0.37 % | MEDIUM (HIGH) |
+| 0.2 s stop half-way down, ±2 mm (10 seeds, worst) | 1 | +0.60 % | −3.82 % | −0.36 % | MEDIUM (HIGH) |
+| 0.35 s stop half-way down, ±2 mm (10 seeds, worst) | 1 | +0.68 % | −3.51 % | −0.36 % | MEDIUM (HIGH) |
+| ISS, 1000 N device force, ±2 mm (vs 500 J, 1028.9 N) | 3 | −0.37 % | +0.16 % | −0.36 % | MEDIUM (HIGH) |
 | Scale 3 % too large, no noise | 3 | +2.53 % | +0.67 % | +2.62 % | MEDIUM (HIGH) |
-| Scale 3 % too large, ±2 mm | 3 | +2.80 % | +1.98 % | +2.86 % | MEDIUM (HIGH) |
+| Scale 3 % too large, ±2 mm | 3 | +2.80 % | +1.99 % | +2.86 % | MEDIUM (HIGH) |
 | 0.25 m rep, 5 s rests, no noise (vs 24.525 J, 112.5 N) | 3 | −0.81 % | −0.01 % | −0.73 % | MEDIUM (HIGH) |
+
+The sticking-point rows are 0.25 m legs of 0.5 s, whose peak force the 4 Hz filter
+flattens by 3.5 %. Slow tempos are in "Tempo limits" above, not in this table.
 
 The two scale rows are the scale error plus the window residual: +3 % in scale is +3 % in
 work and range of motion (the tests assert it against the uncorrected session), less the
@@ -292,14 +415,15 @@ work and range of motion (the tests assert it against the uncorrected session), 
 window residual was −3 %, which cancelled the scale error on a 0.5 m rep and made the
 rows read −0.26 % and +0.67 %; that was a coincidence of sizes, not scale error cancelling.)
 
-The test assertions use tolerances (work within 2–10 %, peak within 3–10 % depending on
-the case); the plan's original targets (work 2 %, range of motion 1 % for the noise-free
-rep, 3 % work for the kinetic exchange on the ISS) are met again.
+The test assertions for the scenarios with rests, pick-ups and sticking points hold about
+twice the worst value measured over 10 to 30 seeds (work within 1.1 to 2.2 %); the
+noise scenarios of the first rows keep the plan's wider targets (work within 2 to 10 %,
+peak within 3 to 10 %).
 
 **Peak force is the noisiest output.** Over 200 seeds the worst peak-force error was
-**3.37 % at ±2 mm and 8.72 % at ±5 mm** (measured in review, reproduced after the trim;
-work and range of motion worst 0.77 % and 0.69 % at ±2 mm, 1.28 % and 1.11 % at ±5 mm;
-with the boundary at the pause's edge they were 3.45 % and 2.86 %, 4.03 % and 3.32 %). White noise is the optimistic case: real pose-model error is correlated in time.
+**3.37 % at ±2 mm and 8.72 % at ±5 mm** (measured in review, reproduced with the current
+rep window; work and range of motion worst 0.77 % and 0.69 % at ±2 mm, 1.28 % and 1.11 %
+at ±5 mm). White noise is the optimistic case: real pose-model error is correlated in time.
 A 1 cm wobble at 2.5 Hz — inside the pass band — measured +4 to +10 % work and +11 to
 +14 % peak force in review, so the table above is a lower bound on the error of real
 video. The plan's ISS expected value is `1000 × 0.5 J` plus a kinetic term; for a
@@ -358,8 +482,9 @@ been done.
 - **A recording that starts mid-lift** counts the visible part as a rep.
 - **White noise is the optimistic case** for the error table (see above): a 1 cm wobble
   at 2.5 Hz passes the filter and measured +4 to +10 % work and +11 to +14 % peak force.
-- **Pauses inside a lift split it**, and a sub-threshold movement that no pause separates
-  from a rep stays in it (see "Rep window").
+- **Slow movement is trimmed as rest** below about 2 cm/s (3 to 5 cm/s with noise), a
+  stop at the same height on both sides of the top reads as a rack, and a sub-threshold
+  movement that no pause separates from a rep stays in it (see "Rep window").
 - **Phone-camera pitch and height** are not modelled; the movement is assumed to be in a
   plane facing the camera.
 
@@ -378,9 +503,10 @@ Ten checks that no synthetic test can stand in for. `VALIDATED_ON_REAL_VIDEO` st
    timestamps are capture time or callback time.
 5. **Whether the wrist landmark slides** along the forearm as the wrist rotates.
 6. **The real pick-up / pre-roll / set-down sequence,** to see whether the pause rule
-   isolates the reps as it does on synthetic ones.
+   isolates the reps as it does on synthetic ones, and **how far a resting hand really
+   drifts and sways**: the rule takes two rests within 1.5 cm for the same height.
 7. **A known mass through a measured height** at slow, normal and fast tempo, against
-   `m·g·h`.
+   `m·g·h`. Slow is where the synthetic limit is (see "Tempo limits").
 8. **Camera pitch (about 15°) and height:** how much each reads as lost range of motion.
 9. **Rep counting on an uneven real set** with a failed last rep.
 10. **Peak-force plausibility against a second instrument** (a force plate or an

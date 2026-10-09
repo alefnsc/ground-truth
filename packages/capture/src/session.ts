@@ -64,7 +64,7 @@ export const ONSET_TOLERANCE_M = 0.003;
  * peak force read low, range of motion high; see the README table). The flag compares this
  * constant with `liftDurationS`, which leaves out the first and the last ONSET_TOLERANCE_M of
  * the lift and so reads about 15 % under the full time of a 0.5 m lift (measured: 1.0 s reads
- * 0.850, 0.9 s 0.767, 0.8 s 0.683, 0.75 s 0.650, 0.7 s 0.600, 0.6 s 0.517): 0.65 s here is a
+ * 0.850, 0.9 s 0.767, 0.8 s 0.683, 0.75 s 0.650, 0.7 s 0.617, 0.6 s 0.533): 0.65 s here is a
  * lift of about 0.75 s. It was 0.7 while `liftDurationS` ran from the onset to the top sample
  * (which read 8 % under); left at 0.7 it would flag the 0.8 s lifts the README table shows
  * are within half a percent. A shorter movement reads shorter still (3 mm is a larger share
