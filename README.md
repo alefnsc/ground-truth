@@ -40,3 +40,7 @@ Missions](https://www.spaceappschallenge.org/2026/challenges/create-health-monit
 [`docs/strategy.md`](docs/strategy.md) — the verified brief this build executes
 from: the thesis, the physics, what transfers from the existing wearable stack,
 what breaks, what data exists, and the demo.
+
+## License
+
+Apache License 2.0. See [`LICENSE`](LICENSE).

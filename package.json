@@ -1,8 +1,11 @@
 {
   "name": "ground-truth",
   "private": true,
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "test": "npm test --workspaces"
-  }
+  },
+  "license": "Apache-2.0"
 }
