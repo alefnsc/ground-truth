@@ -10,6 +10,8 @@ export const G_ENV_MS2 = {
   MARS: 3.71,
   MOON: 1.62,
   ISS: 0,
+  // Free-fall coast between bodies: same as the ISS for this model (no weight, only inertia).
+  TRANSIT: 0,
 } as const;
 
 /**

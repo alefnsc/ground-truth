@@ -6,7 +6,8 @@
  * Source: docs/strategy.md §2, "The load model" (Carter / Whalen / Beaupré daily
  * load stimulus; the Turner / Robling saturating refinement is out of scope).
  *
- * Loads are in any ONE consistent unit (newtons or body weights); results are in that unit.
+ * Loads are in any ONE consistent unit (newtons or body weights). S has that unit times
+ * cycles^(1/m), so it is comparable only between calls that use the same unit and exponent.
  */
 
 import { requireFinite, requireNonNegative, requirePositive } from "./validate";
@@ -35,6 +36,9 @@ export function dailyLoadStimulus(bouts: readonly LoadBout[], exponent: number =
  * How many times more cycles are needed to match a stimulus when peak load is
  * `loadRatio` of the reference: loadRatio^(−m). With m = 4 a quarter of the load
  * needs 256 times the cycles. (S itself only falls by the factor loadRatio.)
+ *
+ * Passing `1 − Genc decrement` as the ratio assumes the stress at the bone site scales
+ * with the measured in-shoe force, which Genc 2010 does not establish.
  */
 export function cyclesToMatch(loadRatio: number, exponent: number = LOAD_STIMULUS_EXPONENT): number {
   requirePositive("loadRatio", loadRatio);

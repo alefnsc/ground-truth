@@ -116,11 +116,11 @@ describe("ARED", () => {
   it("concentric work is setting × stroke, eccentric is 0.9 of it by default", () => {
     const w = aredRepWorkJ(2669, 0.762);
     expect(w.concentricJ).toBeCloseTo(2033.78, 2);
-    expect(w.eccentricJ).toBeCloseTo(1830.4, 2);
+    expect(w.eccentricMagnitudeJ).toBeCloseTo(1830.4, 2);
   });
 
   it("honours an explicit eccentric ratio", () => {
-    expect(aredRepWorkJ(2000, 0.5, 0.5)).toEqual({ concentricJ: 1000, eccentricJ: 500 });
+    expect(aredRepWorkJ(2000, 0.5, 0.5)).toEqual({ concentricJ: 1000, eccentricMagnitudeJ: 500 });
   });
 
   it("rejects an eccentric ratio outside [0, 0.9]", () => {

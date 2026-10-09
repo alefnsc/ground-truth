@@ -98,7 +98,9 @@ export function treadmillEffectiveForceN(massKg: number, gEnvMs2: number, suppor
 /**
  * Modelling choices:
  *  - Over a stroke that starts and ends at rest the flywheel's inertial term does no
- *    net work, so concentric work is the pneumatic setting times the stroke.
+ *    net work, so concentric work is the pneumatic setting times the stroke. This
+ *    assumes a lossless flywheel and a constant pneumatic force (the brief says
+ *    "nearly constant"); friction and any force ripple are not modelled.
  *  - Eccentric work is eccentricRatio × concentric, ratio <= 0.90 (brief §2:
  *    W_eccentric <= 0.90 × W_concentric); the default is that upper bound.
  *  - Peak force adds an inertial term M_eff × a_peak to the setting, for a sinusoidal
@@ -106,16 +108,21 @@ export function treadmillEffectiveForceN(massKg: number, gEnvMs2: number, suppor
  */
 const ARED_MAX_ECCENTRIC_RATIO = 0.9; // brief §2: eccentric runs at <= 90 % of concentric
 
+/**
+ * Both figures are non-negative. `eccentricMagnitudeJ` is a MAGNITUDE, not a signed work:
+ * the signed (negative) counterpart is `-eccentricMagnitudeJ`, the sign convention of
+ * `trajectoryWork().negativeWorkJ`, which is <= 0.
+ */
 export function aredRepWorkJ(
   settingN: number,
   strokeM: number,
   eccentricRatio: number = ARED_MAX_ECCENTRIC_RATIO,
-): { concentricJ: number; eccentricJ: number } {
+): { concentricJ: number; eccentricMagnitudeJ: number } {
   requireNonNegative("settingN", settingN);
   requireNonNegative("strokeM", strokeM);
   requireInRange("eccentricRatio", eccentricRatio, 0, ARED_MAX_ECCENTRIC_RATIO);
   const concentricJ = settingN * strokeM;
-  return { concentricJ, eccentricJ: eccentricRatio * concentricJ };
+  return { concentricJ, eccentricMagnitudeJ: eccentricRatio * concentricJ };
 }
 
 /** Peak acceleration of a sinusoidal stroke of the given length and period, m/s². */
@@ -138,6 +145,18 @@ const ARED_ANCHOR_PERIOD_S = 2;
  * a_peak = 0.381 × π² = 3.7603 m/s², so M_eff = 893 / 3.7603 ≈ 237.5 kg. Computed from
  * the anchor rather than hard-coded; it is a fit to one point, so treat peak forces away
  * from that anchor as a model, not a measurement.
+ *
+ * Three assumptions stand behind it:
+ *  1. M_eff is taken to be independent of the load setting. The brief states the anchor
+ *     only "at the 600 lbf setting"; at any other setting the inertial term is the same
+ *     893 N-at-anchor-geometry term (tested as a property, not verified against a device).
+ *  2. The brief says "up to +91 kgf", so +893 N is an upper bound. This model treats it as
+ *     the value reached by an ideal sinusoidal stroke; a real rep may produce less.
+ *  3. The work claim in aredRepWorkJ assumes a lossless flywheel and a constant pneumatic force.
+ *
+ * Naming note: the brief calls this term "velocity-dependent" while writing it as
+ * F_flywheel(ẍ) and placing its peak at the bottom of the stroke. This model follows the
+ * formula and the timing sentence: the term is proportional to acceleration.
  */
 export const ARED_FLYWHEEL_EFFECTIVE_MASS_KG =
   ARED_ANCHOR_INERTIAL_FORCE_N / sinusoidalPeakAccelerationMs2(ARED_ANCHOR_STROKE_M, ARED_ANCHOR_PERIOD_S);
@@ -156,7 +175,11 @@ export function aredPeakForceN(settingN: number, strokeM: number, repPeriodS: nu
 /** Froude number at the walk-run transition, Fr ≈ 0.5 (brief §2, "Partial gravity is not a scaled version of Earth"). */
 const FROUDE_WALK_RUN = 0.5;
 
-/** v_transition = √(Fr · g · L), L = leg length (brief §2). Zero in microgravity. */
+/**
+ * v_transition = √(Fr · g · L), L = leg length (brief §2). Zero in microgravity.
+ * On the T2 treadmill the relevant gravity is the harness-supplied one
+ * (`supportFraction × 9.81`), not the environment's 0: pass that as `gEnvMs2`.
+ */
 export function froudeTransitionSpeedMs(gEnvMs2: number, legLengthM: number, froude: number = FROUDE_WALK_RUN): number {
   requireNonNegative("gEnvMs2", gEnvMs2);
   requireNonNegative("legLengthM", legLengthM);

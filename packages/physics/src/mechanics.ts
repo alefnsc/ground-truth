@@ -28,7 +28,8 @@
  *     centred acceleration and are not used; for a trajectory that starts at rest the
  *     force peak sits within one sample of the end, which at 60 Hz costs ~0.1 %.
  *
- * No smoothing is applied: noise in the input appears in the output.
+ * No smoothing is applied: noise in the input appears in the output. Peak force is taken
+ * over interior samples only (see 4).
  */
 
 import { requireFinite, requireNonNegative } from "./validate";
@@ -42,7 +43,7 @@ export interface TrajectoryWork {
   positiveWorkJ: number; // >= 0
   negativeWorkJ: number; // <= 0
   netWorkJ: number; // positive + negative
-  peakForceN: number; // max |F| over the trajectory
+  peakForceN: number; // max |F| over the INTERIOR samples (the two end samples have no centred acceleration)
   displacementM: number; // y_last - y_first
 }
 

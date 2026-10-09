@@ -63,7 +63,7 @@ import {
 ergometerActualPowerW(75);                       // 61.7 W (0.98·P − 11.8)
 deviceForceForEarthEquivalenceN(1769.1, 78.4, 0); // 1769.1 N on the ISS
 treadmillEffectiveForceN(78.4, 0, 0.7);           // 538.4 N
-aredRepWorkJ(2669, 0.762);                        // { concentricJ: 2033.8, eccentricJ: 1830.4 }
+aredRepWorkJ(2669, 0.762);                        // { concentricJ: 2033.8, eccentricMagnitudeJ: 1830.4 }
 aredPeakForceN(2669, 0.762, 2);                   // 3562 N
 froudeTransitionSpeedMs(1.62, 0.9);               // 0.854 m/s on the Moon
 ```
