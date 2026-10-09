@@ -9,7 +9,7 @@
 import { trajectoryWork, type Confidence, type Provenance } from "@ground-truth/physics";
 import type { PoseFrame } from "./frames";
 import { DEFAULT_CUTOFF_HZ, filterPaddingSamples, lowPassZeroPhase } from "./filter";
-import { assessQuality, resampleUniform, type QualityReport, type RefusalReason } from "./quality";
+import { assessQuality, resampleUniform, type QualityOptions, type QualityReport, type RefusalReason } from "./quality";
 import { requireFinite } from "./internal";
 import { toMetersUp } from "./scale";
 import { segmentReps, type Rep } from "./segment";
@@ -42,7 +42,24 @@ export const DWELL_MIN_S = 0.3;
  */
 export const DWELL_BAND_M = 0.015;
 
-export interface SessionOptions {
+/**
+ * Measured in the physics review and in this package's review, on synthetic lifts at the
+ * default 4 Hz cutoff: a lift shorter than this is shaped by the filter (work and peak
+ * force read low, range of motion high; see the README table). It is compared with
+ * `liftDurationS`, which is measured on the TRIMMED window and so reads about 14 % under
+ * the lift's full time: 0.7 s here is a lift of about 0.8 s.
+ */
+export const FILTER_LIMITED_LIFT_S = 0.7;
+
+/**
+ * False until the pipeline has been checked against real video (a tape-measured rep, a
+ * known mass through a measured height). While it is false the confidence grade is capped
+ * at MEDIUM: the grade describes CAPTURE CONDITIONS (frame rate, lost frames), not accuracy,
+ * and it was HIGH for a rep that read +121 % and for a 3 % scale error.
+ */
+export const VALIDATED_ON_REAL_VIDEO = false;
+
+export interface SessionOptions extends QualityOptions {
   massKg: number;
   gEnvMs2: number;
   /** Metres per normalised image unit (see metersPerUnitFromStature), or null if no calibration was done. */
@@ -51,12 +68,15 @@ export interface SessionOptions {
   deviceForceN?: number;
   cutoffHz?: number;
   minPhaseDisplacementM?: number;
+  // visibilityThreshold and maxGapS (from QualityOptions) move the quality gate's limits; the defaults are VISIBILITY_THRESHOLD and MAX_GAP_S.
 }
 
 export interface RepResult {
   startS: number; // seconds from the first frame of the recording to the movement onset (the end of the pause before the lift)
   durationS: number; // movement onset to movement offset (the start of the pause after the lowering)
   liftDurationS: number; // movement onset to the top, the turnaround the segmenter found
+  /** True when liftDurationS is under FILTER_LIMITED_LIFT_S: the 4 Hz default cutoff shapes a lift this fast, so work and peak force read low. */
+  filterLimited: boolean;
   rangeOfMotionM: number; // height of the lift, smoothed top minus smoothed onset
   positiveWorkJ: number;
   negativeWorkJ: number; // <= 0
@@ -64,6 +84,10 @@ export interface RepResult {
   impulseNs: number;
 }
 
+/**
+ * `provenance.confidence` grades the CAPTURE CONDITIONS (frame rate, lost frames), not the
+ * accuracy of the numbers, and is capped at MEDIUM while VALIDATED_ON_REAL_VIDEO is false.
+ */
 export type SessionResult =
   | {
       ok: true;
@@ -75,7 +99,12 @@ export type SessionResult =
     }
   | { ok: false; reasons: RefusalReason[]; quality: QualityReport };
 
-function confidenceOf(quality: QualityReport): Confidence {
+/**
+ * The grade of the CAPTURE CONDITIONS alone, before the real-video cap: frame rate and
+ * lost frames. It says nothing about accuracy: scale, depth and the pose model's noise
+ * are not in it.
+ */
+export function gradeCaptureConditions(quality: Pick<QualityReport, "rateHz" | "lowVisibilityFraction">): Confidence {
   if (quality.rateHz < LOW_CONFIDENCE_BELOW_RATE_HZ || quality.lowVisibilityFraction > LOW_CONFIDENCE_ABOVE_LOW_VISIBILITY) {
     return "LOW";
   }
@@ -83,6 +112,12 @@ function confidenceOf(quality: QualityReport): Confidence {
     return "HIGH";
   }
   return "MEDIUM";
+}
+
+/** The reported grade: the capture-conditions grade, capped at MEDIUM until VALIDATED_ON_REAL_VIDEO. */
+function confidenceOf(quality: QualityReport): Confidence {
+  const grade = gradeCaptureConditions(quality);
+  return grade === "HIGH" && !VALIDATED_ON_REAL_VIDEO ? "MEDIUM" : grade;
 }
 
 /** True when the smoothed position stays within DWELL_BAND_M over samples a..b (inclusive). */
@@ -175,12 +210,12 @@ export function analyzeSession(frames: readonly PoseFrame[], options: SessionOpt
     if (options.cutoffHz <= 0) throw new RangeError(`cutoffHz must be > 0, got ${options.cutoffHz}`);
   }
 
-  const quality = assessQuality(frames, metersPerUnit !== null);
+  const quality = assessQuality(frames, metersPerUnit !== null, options);
   if (quality.reasons.length > 0 || metersPerUnit === null) {
     return { ok: false, reasons: quality.reasons, quality };
   }
 
-  const grid = resampleUniform(frames);
+  const grid = resampleUniform(frames, options);
   // The filter needs more samples than its padding; a recording shorter than that is TOO_SHORT (at the cutoff asked for).
   const cutoffHz = options.cutoffHz ?? DEFAULT_CUTOFF_HZ;
   if (cutoffHz >= grid.rateHz / 2) throw new RangeError(`cutoffHz must be below rateHz / 2 (${grid.rateHz / 2}), got ${cutoffHz}`);
@@ -192,7 +227,8 @@ export function analyzeSession(frames: readonly PoseFrame[], options: SessionOpt
   const metres = toMetersUp(uniform, metersPerUnit);
   const smoothed = lowPassZeroPhase(metres.map((p) => p.yM), grid.rateHz, cutoffHz);
   const samples = metres.map((p, i) => ({ tS: p.tS, yM: smoothed[i] as number }));
-  const t0 = (frames[0] as PoseFrame).tS;
+  // startS counts from the first frame that has a usable timestamp, so a clock that does not start at 0 changes nothing.
+  const t0 = (frames.find((f) => Number.isFinite(f.tS)) as PoseFrame).tS;
 
   const reps: RepResult[] = segmentReps(smoothed, options.minPhaseDisplacementM).map((rep) => {
     const { onset, offset } = trimmedWindow(smoothed, rep, grid.rateHz);
@@ -205,6 +241,7 @@ export function analyzeSession(frames: readonly PoseFrame[], options: SessionOpt
       startS: start.tS - t0,
       durationS: end.tS - start.tS,
       liftDurationS: top.tS - start.tS,
+      filterLimited: top.tS - start.tS < FILTER_LIMITED_LIFT_S,
       rangeOfMotionM: top.yM - start.yM,
       positiveWorkJ: work.positiveWorkJ,
       negativeWorkJ: work.negativeWorkJ,

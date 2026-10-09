@@ -40,6 +40,28 @@ export function metersPerUnitFromStature(statureM: number, eyeY: number, ankleY:
   return (EYE_TO_ANKLE_FRACTION_OF_STATURE * statureM) / span;
 }
 
+/** Judgement call: a reference length spanning under a twentieth of the frame height is too coarse to scale from. */
+export const MIN_KNOWN_LENGTH_SPAN = 0.05;
+
+/**
+ * Metres per normalised image unit from an object of known length held vertically in the
+ * lifting hand, at the wrist's depth, in one frame: lengthM / |yB − yA|, where yA and yB
+ * are the image heights of its two ends. Order does not matter. Preferred to the stature
+ * method because the reference is at the wrist's own distance from the camera (see the
+ * README, "Scale"). Throws if the length is not > 0 or the span is under 0.05 of the frame.
+ */
+export function metersPerUnitFromKnownLength(lengthM: number, yA: number, yB: number): number {
+  requireFinite("lengthM", lengthM);
+  if (lengthM <= 0) throw new RangeError(`lengthM must be > 0, got ${lengthM}`);
+  requireFinite("yA", yA);
+  requireFinite("yB", yB);
+  const span = Math.abs(yB - yA);
+  if (span < MIN_KNOWN_LENGTH_SPAN) {
+    throw new RangeError(`the reference's span must be at least ${MIN_KNOWN_LENGTH_SPAN} of the frame, got ${span}`);
+  }
+  return lengthM / span;
+}
+
 /**
  * Wrist height in metres, up positive: yM = −wristY · metersPerUnit, shifted so the
  * first sample is 0.

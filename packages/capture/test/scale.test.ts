@@ -1,6 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { EYE_TO_ANKLE_FRACTION_OF_STATURE, metersPerUnitFromStature, toMetersUp, type PoseFrame } from "../src/index";
+import { EYE_TO_ANKLE_FRACTION_OF_STATURE, MIN_KNOWN_LENGTH_SPAN, metersPerUnitFromKnownLength, metersPerUnitFromStature, toMetersUp, type PoseFrame } from "../src/index";
 import { lcg, minJerk, syntheticSession } from "./helpers";
+
+describe("metersPerUnitFromKnownLength", () => {
+  it("a 1.0 m reference spanning 0.2 to 0.7 of the frame is 2.0 m per unit, in either order", () => {
+    expect(metersPerUnitFromKnownLength(1.0, 0.2, 0.7)).toBeCloseTo(2.0, 12);
+    expect(metersPerUnitFromKnownLength(1.0, 0.7, 0.2)).toBeCloseTo(2.0, 12);
+    expect(metersPerUnitFromKnownLength(0.45, 0.31, 0.49)).toBeCloseTo(0.45 / 0.18, 12);
+  });
+
+  it("throws when the span is under 0.05 of the frame", () => {
+    expect(MIN_KNOWN_LENGTH_SPAN).toBe(0.05);
+    expect(() => metersPerUnitFromKnownLength(1.0, 0.5, 0.52)).toThrow(RangeError);
+    expect(() => metersPerUnitFromKnownLength(1.0, 0.5, 0.52)).toThrow(/span/);
+    expect(() => metersPerUnitFromKnownLength(1.0, 0.5, 0.5)).toThrow(/span/);
+    expect(metersPerUnitFromKnownLength(1.0, 0.5, 0.75)).toBeCloseTo(4, 12);
+    expect(metersPerUnitFromKnownLength(0.1, 0.25, 0.5)).toBeCloseTo(0.4, 12);
+  });
+
+  it("rejects a non-positive length and non-finite coordinates", () => {
+    expect(() => metersPerUnitFromKnownLength(0, 0.2, 0.7)).toThrow(/lengthM/);
+    expect(() => metersPerUnitFromKnownLength(-1, 0.2, 0.7)).toThrow(/lengthM/);
+    expect(() => metersPerUnitFromKnownLength(Number.NaN, 0.2, 0.7)).toThrow(/lengthM/);
+    expect(() => metersPerUnitFromKnownLength(1, Number.NaN, 0.7)).toThrow(/yA/);
+    expect(() => metersPerUnitFromKnownLength(1, 0.2, Number.POSITIVE_INFINITY)).toThrow(/yB/);
+  });
+});
 
 describe("metersPerUnitFromStature", () => {
   it("1.80 m, eye at 0.20 and ankle at 0.80 of the frame: 0.897 × 1.80 / 0.60 = 2.691", () => {

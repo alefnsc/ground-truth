@@ -195,6 +195,27 @@ describe("assessQuality", () => {
   });
 });
 
+describe("assessQuality: overridable limits", () => {
+  it("visibilityThreshold moves what counts as lost, and maxGapS what counts as a long gap", () => {
+    const murky = clean(60, 6).map((f) => ({ ...f, visibility: 0.45 }));
+    expect(assessQuality(murky, true).reasons).toContain("LANDMARK_LOST");
+    expect(assessQuality(murky, true, { visibilityThreshold: 0.4 }).reasons).toEqual([]);
+    const run = Array.from({ length: 24 }, (_, i) => 100 + i); // a 0.42 s gap
+    const gappy = withLowVisibility(clean(60, 6), run);
+    expect(assessQuality(gappy, true).reasons).toEqual(["GAP_TOO_LONG"]);
+    expect(assessQuality(gappy, true, { maxGapS: 0.5 }).reasons).toEqual([]);
+    expect(assessQuality(gappy, true, { maxGapS: 0.4 }).reasons).toEqual(["GAP_TOO_LONG"]);
+    expect(() => assessQuality(gappy, true, { maxGapS: -1 })).toThrow(/maxGapS/);
+    expect(() => assessQuality(gappy, true, { visibilityThreshold: 2 })).toThrow(/visibilityThreshold/);
+  });
+
+  it("resampleUniform honours the same visibilityThreshold", () => {
+    const murky = clean(60, 3).map((f) => ({ ...f, visibility: 0.45 }));
+    expect(() => resampleUniform(murky)).toThrow(RangeError);
+    expect(resampleUniform(murky, { visibilityThreshold: 0.4 }).tS.length).toBeGreaterThan(170);
+  });
+});
+
 describe("resampleUniform", () => {
   it("jittered timestamps of a known line come out on the line, uniformly spaced", () => {
     const jitter = lcg(11);

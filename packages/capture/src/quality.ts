@@ -4,6 +4,7 @@
  */
 
 import type { PoseFrame } from "./frames";
+import { requireFinite } from "./internal";
 
 export type RefusalReason = "NO_SCALE" | "LOW_FRAME_RATE" | "LANDMARK_LOST" | "GAP_TOO_LONG" | "TOO_SHORT";
 
@@ -21,6 +22,29 @@ export const MAX_LOW_VISIBILITY_FRACTION = 0.1;
 export const MAX_GAP_S = 0.25;
 /** Judgement call: one rep takes about 2 s; a recording under 1 s cannot contain one. */
 export const MIN_DURATION_S = 1.0;
+
+/** The two limits a caller may move; the exported constants are the defaults. */
+export interface QualityOptions {
+  /** A frame whose landmark visibility is below this is not trusted, within [0, 1]. Default VISIBILITY_THRESHOLD. */
+  visibilityThreshold?: number;
+  /** The longest run of missing or low-visibility time (seconds) that is bridged, > 0. Default MAX_GAP_S. */
+  maxGapS?: number;
+}
+
+interface Limits {
+  visibilityThreshold: number;
+  maxGapS: number;
+}
+
+function limitsOf(options: QualityOptions | undefined): Limits {
+  const visibilityThreshold = options?.visibilityThreshold ?? VISIBILITY_THRESHOLD;
+  const maxGapS = options?.maxGapS ?? MAX_GAP_S;
+  requireFinite("visibilityThreshold", visibilityThreshold);
+  if (visibilityThreshold < 0 || visibilityThreshold > 1) throw new RangeError(`visibilityThreshold must be within [0, 1], got ${visibilityThreshold}`);
+  requireFinite("maxGapS", maxGapS);
+  if (maxGapS <= 0) throw new RangeError(`maxGapS must be > 0, got ${maxGapS}`);
+  return { visibilityThreshold, maxGapS };
+}
 
 export interface QualityReport {
   rateHz: number; // median frame rate
@@ -76,8 +100,8 @@ function medianRateHz(frames: readonly PoseFrame[]): number {
 }
 
 /** A frame the pipeline may use: a finite wristY and a visibility at or above the threshold (NaN fails the comparison). */
-const isVisible = (f: PoseFrame): boolean =>
-  Number.isFinite(f.wristY) && Math.abs(f.wristY) < MAX_ABS_WRIST_Y && f.visibility >= VISIBILITY_THRESHOLD;
+const isVisible = (f: PoseFrame, visibilityThreshold: number): boolean =>
+  Number.isFinite(f.wristY) && Math.abs(f.wristY) < MAX_ABS_WRIST_Y && f.visibility >= visibilityThreshold;
 
 /**
  * Gaps are measured between usable frames: the time from one visible frame to the next
@@ -86,7 +110,7 @@ const isVisible = (f: PoseFrame): boolean =>
  * the first or after the last visible frame) counts too. With no visible frame the
  * whole recording is one gap.
  */
-function longestGapS(frames: readonly PoseFrame[]): number {
+function longestGapS(frames: readonly PoseFrame[], visibilityThreshold: number): number {
   if (frames.length === 0) return 0;
   const first = (frames[0] as PoseFrame).tS;
   const last = (frames[frames.length - 1] as PoseFrame).tS;
@@ -94,7 +118,7 @@ function longestGapS(frames: readonly PoseFrame[]): number {
   let previousVisibleT = first;
   let sawVisible = false;
   for (const f of frames) {
-    if (!isVisible(f)) continue;
+    if (!isVisible(f, visibilityThreshold)) continue;
     if (sawVisible) longest = Math.max(longest, f.tS - previousVisibleT);
     else longest = Math.max(longest, f.tS - first); // lost time at the start
     previousVisibleT = f.tS;
@@ -104,12 +128,13 @@ function longestGapS(frames: readonly PoseFrame[]): number {
   return Math.max(longest, last - previousVisibleT); // lost time at the end
 }
 
-export function assessQuality(frames: readonly PoseFrame[], hasScale: boolean): QualityReport {
+export function assessQuality(frames: readonly PoseFrame[], hasScale: boolean, options?: QualityOptions): QualityReport {
+  const { visibilityThreshold, maxGapS } = limitsOf(options);
   const { kept, dropped } = inTimeOrder(frames);
   const rateHz = medianRateHz(kept);
-  const lowVisibilityFraction = kept.length === 0 ? 0 : kept.filter((f) => !isVisible(f)).length / kept.length;
+  const lowVisibilityFraction = kept.length === 0 ? 0 : kept.filter((f) => !isVisible(f, visibilityThreshold)).length / kept.length;
   const droppedFraction = frames.length === 0 ? 0 : dropped / frames.length;
-  const gapS = longestGapS(kept);
+  const gapS = longestGapS(kept, visibilityThreshold);
   const durationS = kept.length < 2 ? 0 : (kept[kept.length - 1] as PoseFrame).tS - (kept[0] as PoseFrame).tS;
 
   const reasons: RefusalReason[] = [];
@@ -119,7 +144,7 @@ export function assessQuality(frames: readonly PoseFrame[], hasScale: boolean): 
   if (rateHz < MIN_RATE_HZ || gridTooDense) reasons.push("LOW_FRAME_RATE");
   // Frames dropped for their timestamps are lost frames too: too many of them is a stream that cannot be trusted.
   if (lowVisibilityFraction > MAX_LOW_VISIBILITY_FRACTION || droppedFraction > MAX_LOW_VISIBILITY_FRACTION) reasons.push("LANDMARK_LOST");
-  if (gapS > MAX_GAP_S) reasons.push("GAP_TOO_LONG");
+  if (gapS > maxGapS) reasons.push("GAP_TOO_LONG");
   if (durationS < MIN_DURATION_S) reasons.push("TOO_SHORT");
 
   return { rateHz, lowVisibilityFraction, longestGapS: gapS, durationS, droppedFrames: dropped, reasons };
@@ -128,14 +153,19 @@ export function assessQuality(frames: readonly PoseFrame[], hasScale: boolean): 
 /**
  * Drops frames that are not in time order and low-visibility frames (their wristY is never read), then linearly interpolates
  * onto a uniform grid at the median frame rate. The grid runs from the first to the last
- * visible frame: nothing is extrapolated. tS is on the frames' own clock.
+ * visible frame: nothing is extrapolated. tS is on the frames' own clock. Only
+ * `visibilityThreshold` of the options matters here (the gap limit is the gate's).
  */
-export function resampleUniform(frames: readonly PoseFrame[]): { rateHz: number; tS: number[]; wristY: number[] } {
+export function resampleUniform(
+  frames: readonly PoseFrame[],
+  options?: QualityOptions,
+): { rateHz: number; tS: number[]; wristY: number[] } {
+  const { visibilityThreshold } = limitsOf(options);
   const ordered = inTimeOrder(frames).kept;
   const rateHz = medianRateHz(ordered);
-  const kept = ordered.filter(isVisible);
+  const kept = ordered.filter((f) => isVisible(f, visibilityThreshold));
   if (kept.length < 2) {
-    throw new RangeError(`frames must contain at least 2 usable frames (finite time and wristY, visibility >= ${VISIBILITY_THRESHOLD}), got ${kept.length}`);
+    throw new RangeError(`frames must contain at least 2 usable frames (finite time and wristY, visibility >= ${visibilityThreshold}), got ${kept.length}`);
   }
 
   const t0 = (kept[0] as PoseFrame).tS;

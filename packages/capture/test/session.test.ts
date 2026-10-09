@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { G_ENV_MS2 } from "@ground-truth/physics";
-import { analyzeSession, type PoseFrame, type SessionResult } from "../src/index";
-import { syntheticSession } from "./helpers";
+import {
+  FILTER_LIMITED_LIFT_S,
+  VALIDATED_ON_REAL_VIDEO,
+  analyzeSession,
+  assessQuality,
+  gradeCaptureConditions,
+  type PoseFrame,
+  type SessionResult,
+} from "../src/index";
+import { lcg, legSession, repLegs, syntheticSession } from "./helpers";
 
 const SCALE = 2.5; // metres per image unit used to synthesise the frames
 const MASS_KG = 10;
@@ -48,7 +56,8 @@ describe("analyzeSession: measurement", () => {
       // the lowering gives the work back
       expect(relErr(-rep.negativeWorkJ, TRUE_WORK_J)).toBeLessThan(0.04);
     }
-    expect(r.provenance).toEqual({ loadSource: "CAMERA", confidence: "HIGH" });
+    // a clean 60 Hz stream grades HIGH on capture conditions, but nothing has been checked on real video: capped
+    expect(r.provenance).toEqual({ loadSource: "CAMERA", confidence: "MEDIUM" });
   });
 
   it("reports when each rep started and how long it took, and the session totals", () => {
@@ -69,7 +78,7 @@ describe("analyzeSession: measurement", () => {
     expect(r.quality.reasons).toEqual([]);
   });
 
-  it("3 reps, 60 Hz, ±2 mm noise: work within 5 %, peak within 10 %, range of motion within 3 %, confidence HIGH", () => {
+  it("3 reps, 60 Hz, ±2 mm noise: work within 5 %, peak within 10 %, range of motion within 3 %, confidence MEDIUM (capped)", () => {
     const r = ok(analyze(session({ noiseM: 0.002 })));
     expect(r.reps).toHaveLength(3);
     for (const rep of r.reps) {
@@ -77,7 +86,7 @@ describe("analyzeSession: measurement", () => {
       expect(relErr(rep.peakForceN, TRUE_PEAK_N)).toBeLessThan(0.1);
       expect(relErr(rep.rangeOfMotionM, TRUE_ROM_M)).toBeLessThan(0.03);
     }
-    expect(r.provenance.confidence).toBe("HIGH");
+    expect(r.provenance.confidence).toBe("MEDIUM");
   });
 
   it("3 reps, 30 Hz, ±2 mm noise: work within 5 %, confidence MEDIUM", () => {
@@ -201,30 +210,102 @@ describe("analyzeSession: refusal", () => {
 });
 
 describe("analyzeSession: confidence", () => {
+  // Capture-conditions grade, before the cap: LOW below 27 Hz or above 5 % lost frames, HIGH from 45 Hz with at most 2 %.
+  const grade = (frames: readonly PoseFrame[]) => gradeCaptureConditions(ok(analyze(frames)).quality);
+  const reported = (frames: readonly PoseFrame[]) => ok(analyze(frames)).provenance.confidence;
+
   it("is LOW below 27 Hz and above 5 % low-visibility frames, MEDIUM from 27 Hz, HIGH from 45 Hz with at most 2 %", () => {
     const base = (rateHz: number) => session({ noiseM: 0.002, rateHz });
-    expect(ok(analyze(base(25))).provenance.confidence).toBe("LOW");
-    expect(ok(analyze(base(30))).provenance.confidence).toBe("MEDIUM");
-    expect(ok(analyze(base(50))).provenance.confidence).toBe("HIGH");
-    expect(ok(analyze(base(60))).provenance.confidence).toBe("HIGH");
+    expect(grade(base(25))).toBe("LOW");
+    expect(grade(base(30))).toBe("MEDIUM");
+    expect(grade(base(50))).toBe("HIGH");
+    expect(grade(base(60))).toBe("HIGH");
     // 1.7 % lost is still HIGH, 3.1 % is MEDIUM, 6.2 % is LOW (481 frames)
-    expect(ok(analyze(loseFrames(base(60), 60))).provenance.confidence).toBe("HIGH");
-    expect(ok(analyze(loseFrames(base(60), 33))).provenance.confidence).toBe("MEDIUM");
-    expect(ok(analyze(loseFrames(base(60), 16))).provenance.confidence).toBe("LOW");
+    expect(grade(loseFrames(base(60), 60))).toBe("HIGH");
+    expect(grade(loseFrames(base(60), 33))).toBe("MEDIUM");
+    expect(grade(loseFrames(base(60), 16))).toBe("LOW");
+  });
+
+  it("the reported grade is that grade capped at MEDIUM while nothing is validated on real video", () => {
+    expect(VALIDATED_ON_REAL_VIDEO).toBe(false);
+    const base = (rateHz: number) => session({ noiseM: 0.002, rateHz });
+    expect(reported(base(25))).toBe("LOW");
+    expect(reported(base(30))).toBe("MEDIUM");
+    expect(reported(base(60))).toBe("MEDIUM"); // HIGH on capture conditions, capped
+    expect(reported(loseFrames(base(60), 60))).toBe("MEDIUM");
+    expect(reported(loseFrames(base(60), 16))).toBe("LOW");
+  });
+
+  it("the uncapped grading function still returns HIGH for a clean 60 Hz stream", () => {
+    expect(gradeCaptureConditions(assessQuality(session({ noiseM: 0.002 }), true))).toBe("HIGH");
+    expect(gradeCaptureConditions({ rateHz: 60, lowVisibilityFraction: 0 })).toBe("HIGH");
+    expect(gradeCaptureConditions({ rateHz: 60, lowVisibilityFraction: 0.03 })).toBe("MEDIUM");
   });
 
   it("the nominal camera rates sit inside their grade, not on its edge: 29.97 and 30.3 grade alike, 59.94 and 50 grade alike", () => {
-    const grade = (rateHz: number) => ok(analyze(session({ noiseM: 0.002, rateHz }))).provenance.confidence;
-    expect(grade(29.97)).toBe(grade(30.3));
-    expect(grade(29.97)).toBe("MEDIUM");
-    expect(grade(59.94)).toBe(grade(50));
-    expect(grade(59.94)).toBe("HIGH");
+    const at = (rateHz: number) => session({ noiseM: 0.002, rateHz });
+    expect(grade(at(29.97))).toBe(grade(at(30.3)));
+    expect(grade(at(29.97))).toBe("MEDIUM");
+    expect(grade(at(59.94))).toBe(grade(at(50)));
+    expect(grade(at(59.94))).toBe("HIGH");
+    expect(reported(at(29.97))).toBe(reported(at(30.3)));
+    expect(reported(at(59.94))).toBe(reported(at(50)));
   });
 
   it("23.976 fps is accepted and 15 fps is refused", () => {
-    expect(ok(analyze(session({ noiseM: 0.002, rateHz: 23.976 }))).provenance.confidence).toBe("LOW");
+    expect(reported(session({ noiseM: 0.002, rateHz: 23.976 }))).toBe("LOW");
     const r = analyze(session({ rateHz: 15 }));
     expect(r.ok).toBe(false);
+  });
+});
+
+describe("analyzeSession: filterLimited", () => {
+  it("is true for a 0.4 s lift, which the 4 Hz default cutoff cannot resolve, and false for a 1.0 s lift", () => {
+    expect(FILTER_LIMITED_LIFT_S).toBe(0.7);
+    const fast = ok(analyze(legSession({ legs: repLegs(3, 0.5, 0.4, 0.4, 1) })));
+    expect(fast.reps).toHaveLength(3);
+    for (const rep of fast.reps) {
+      expect(rep.liftDurationS).toBeLessThan(FILTER_LIMITED_LIFT_S);
+      expect(rep.filterLimited).toBe(true);
+    }
+    const slow = ok(analyze(session()));
+    for (const rep of slow.reps) {
+      expect(rep.liftDurationS).toBeGreaterThanOrEqual(FILTER_LIMITED_LIFT_S);
+      expect(rep.filterLimited).toBe(false);
+    }
+  });
+});
+
+describe("analyzeSession: overridable quality limits", () => {
+  const murky = (): PoseFrame[] => {
+    const noise = lcg(5);
+    return session({ noiseM: 0.002 }).map((f) => ({ ...f, visibility: 0.55 + 0.1 * noise() })); // uniform 0.45 .. 0.65
+  };
+
+  it("a session refused with the default visibility threshold (0.5) is accepted with visibilityThreshold 0.4", () => {
+    const refused = analyze(murky());
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.reasons).toContain("LANDMARK_LOST");
+    const accepted = ok(analyze(murky(), { visibilityThreshold: 0.4 }));
+    expect(accepted.reps).toHaveLength(3);
+    expect(accepted.quality.lowVisibilityFraction).toBe(0);
+  });
+
+  it("a 0.4 s lost run is refused by default and accepted with maxGapS 0.5", () => {
+    const frames = session({ noiseM: 0.002 }).map((f, i) => (i >= 100 && i < 124 ? { ...f, visibility: 0.1, wristY: 999 } : f));
+    const refused = analyze(frames);
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.reasons).toEqual(["GAP_TOO_LONG"]);
+    expect(ok(analyze(frames, { maxGapS: 0.5 })).reps).toHaveLength(3);
+  });
+
+  it("rejects an out-of-range visibilityThreshold or a non-positive maxGapS with a RangeError naming it", () => {
+    const f = session();
+    expect(() => analyze(f, { visibilityThreshold: 1.5 })).toThrow(/visibilityThreshold/);
+    expect(() => analyze(f, { visibilityThreshold: Number.NaN })).toThrow(/visibilityThreshold/);
+    expect(() => analyze(f, { maxGapS: 0 })).toThrow(/maxGapS/);
   });
 });
 
