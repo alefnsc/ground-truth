@@ -8,13 +8,13 @@ import { legSession, repLegs, syntheticSession, type Leg } from "./helpers";
 //
 // Timing. The boundary is the last (first) pause sample within ONSET_TOLERANCE_M = 3 mm of the rest
 // level, and a minimum-jerk lift of 0.5 m in 1 s takes 0.08 s to cover its first 3 mm, so the onset
-// reads 0.07 to 0.10 s late and the offset about as early: durationS reads 0.10 to 0.18 s short for a
-// 2 s rep. The finding's 0.15 s holds for startS (START_TOLERANCE_S, measured 0.10) but NOT for
-// durationS, which is two such errors: DURATION_TOLERANCE_S 0.2 is just above the measured 0.18.
-// While the boundary sat at the pause's edge (1.5 cm) the measurements were 0.15 and 0.30 and the
-// bounds 0.2 and 0.35.
-const START_TOLERANCE_S = 0.15;
-const DURATION_TOLERANCE_S = 0.2;
+// reads 0.07 to 0.12 s late and the offset about as early: durationS reads 0.10 to 0.20 s short for a
+// 2 s rep. Both tolerances are the worst value over 30 seeds at ±5 mm (5 and 10 s rests) plus one 60 Hz
+// sample: startS 0.117 + 0.017, durationS 0.200 + 0.017.
+const START_TOLERANCE_S = 0.135;
+const DURATION_TOLERANCE_S = 0.22;
+const SEEDS_30 = Array.from({ length: 30 }, (_, i) => i + 1);
+const SEEDS_10 = SEEDS_30.slice(0, 10);
 
 const SCALE = 2.5;
 const MASS_KG = 10;
@@ -35,9 +35,10 @@ describe("rests are not billed to a rep", () => {
   // Rest noise rectifies into positive work (0.22 J/s at ±2 mm, 0.54 J/s at ±5 mm for 10 kg on Earth),
   // so a rep that owns its rests reads 7 to 19 % high after a 10 s rest.
   for (const restS of [5, 10]) {
-    for (const [noiseM, workTolerance] of [[0.002, 0.05], [0.005, 0.08]] as const) {
-      it(`3 reps, ${restS} s rests, ±${noiseM * 1000} mm: work within ${workTolerance * 100} %, start within ${START_TOLERANCE_S} s, duration within ${DURATION_TOLERANCE_S} s`, () => {
-        for (const seed of [1, 2, 3]) {
+    // Work bounds are twice the worst value over the 30 seeds and both rest lengths: 0.72 % at ±2 mm, 1.11 % at ±5 mm.
+    for (const [noiseM, workTolerance] of [[0.002, 0.014], [0.005, 0.022]] as const) {
+      it(`3 reps, ${restS} s rests, ±${noiseM * 1000} mm, 30 seeds: work within ${workTolerance * 100} %, start within ${START_TOLERANCE_S} s, duration within ${DURATION_TOLERANCE_S} s`, () => {
+        for (const seed of SEEDS_30) {
           const r = analyze(syntheticSession({ reps: 3, heightM: 0.5, upS: 1, downS: 1, restS, rateHz: 60, noiseM, seed, metersPerUnit: SCALE }));
           expect(r.reps).toHaveLength(3);
           r.reps.forEach((rep, k) => {
@@ -51,12 +52,12 @@ describe("rests are not billed to a rep", () => {
     }
   }
 
-  it("impulse of the same rep does not depend on the rest around it: 0.5 s and 10 s rests agree within 5 %", () => {
+  it("impulse of the same rep does not depend on the rest around it: 0.5 s and 10 s rests agree within 2 %", () => {
     const at = (restS: number) =>
       analyze(syntheticSession({ reps: 3, heightM: 0.5, upS: 1, downS: 1, restS, rateHz: 60, noiseM: 0.002, seed: 1, metersPerUnit: SCALE }));
     const short = at(0.5).reps[1]!;
     const long = at(10).reps[1]!;
-    expect(relErr(long.impulseNs, short.impulseNs)).toBeLessThan(0.05);
+    expect(relErr(long.impulseNs, short.impulseNs)).toBeLessThan(0.02); // measured 1.0 % (178.05 and 179.86 N·s: one sample of duration)
   });
 });
 
@@ -84,22 +85,24 @@ describe("rep boundaries sit at the rest level, not at the edge of the pause", (
     });
   });
 
-  it("0.5 m, 5 s rests, ±2 mm (seeds 1 and 2): work within 3 %, ROM within 2 %", () => {
-    for (const seed of [1, 2]) {
+  it("0.5 m, 5 s rests, ±2 mm (10 seeds): work within 1.1 %, ROM within 0.9 %", () => {
+    // measured over the ten seeds: work 0.54 %, ROM 0.45 %. A boundary back at the pause's edge reads 3.2 % and 2.6 %.
+    for (const seed of SEEDS_10) {
       const r = rests(0.5, 5, 0.002, seed);
       expect(r.reps).toHaveLength(3);
       for (const rep of r.reps) {
-        expect(relErr(rep.positiveWorkJ, TRUE_WORK_J)).toBeLessThan(0.03);
-        expect(relErr(rep.rangeOfMotionM, TRUE_ROM_M)).toBeLessThan(0.02);
+        expect(relErr(rep.positiveWorkJ, TRUE_WORK_J)).toBeLessThan(0.011);
+        expect(relErr(rep.rangeOfMotionM, TRUE_ROM_M)).toBeLessThan(0.009);
       }
     }
   });
 
-  it("0.5 m, 10 s rests, ±5 mm (seeds 1 and 2): work within 5 %", () => {
-    for (const seed of [1, 2]) {
+  it("0.5 m, 10 s rests, ±5 mm (10 seeds): work within 1.9 %", () => {
+    // measured over the ten seeds: 0.93 %
+    for (const seed of SEEDS_10) {
       const r = rests(0.5, 10, 0.005, seed);
       expect(r.reps).toHaveLength(3);
-      for (const rep of r.reps) expect(relErr(rep.positiveWorkJ, TRUE_WORK_J)).toBeLessThan(0.05);
+      for (const rep of r.reps) expect(relErr(rep.positiveWorkJ, TRUE_WORK_J)).toBeLessThan(0.019);
     }
   });
 
@@ -109,7 +112,8 @@ describe("rep boundaries sit at the rest level, not at the edge of the pause", (
     for (const rep of r.reps) expect(relErr(rep.positiveWorkJ, MASS_KG * EARTH * 0.25)).toBeLessThan(0.025);
   });
 
-  it("pick-up, 1.5 s pause, three curls, set-down: each rep's work within 4 % and ROM within 3 %", () => {
+  it("pick-up, 1.5 s pause, three curls, set-down: each rep's work within 1.1 % and ROM within 0.95 % (no noise, and ±2 mm over 10 seeds)", () => {
+    // measured: work 0.46 % and ROM 0.37 % with no noise, 0.55 % and 0.47 % worst over the ten seeds
     const PICKUP: Leg[] = [
       [1, 0], [1, -0.6], [0.5, -0.6], [1.2, 0], [1.5, 0],
       [1, 0.5], [1, 0], [1, 0],
@@ -117,12 +121,14 @@ describe("rep boundaries sit at the rest level, not at the edge of the pause", (
       [1, 0.5], [1, 0], [1.5, 0],
       [1.2, -0.6], [0.5, -0.6], [1, 0], [1, 0],
     ];
-    for (const noiseM of [0, 0.002]) {
-      const r = analyze(legSession({ legs: PICKUP, noiseM }));
-      expect(r.reps).toHaveLength(3);
-      for (const rep of r.reps) {
-        expect(relErr(rep.positiveWorkJ, TRUE_WORK_J)).toBeLessThan(0.04);
-        expect(relErr(rep.rangeOfMotionM, TRUE_ROM_M)).toBeLessThan(0.03);
+    for (const [noiseM, seedList] of [[0, [1]], [0.002, SEEDS_10]] as const) {
+      for (const seed of seedList) {
+        const r = analyze(legSession({ legs: PICKUP, noiseM, seed }));
+        expect(r.reps).toHaveLength(3);
+        for (const rep of r.reps) {
+          expect(relErr(rep.positiveWorkJ, TRUE_WORK_J)).toBeLessThan(0.011);
+          expect(relErr(rep.rangeOfMotionM, TRUE_ROM_M)).toBeLessThan(0.0095);
+        }
       }
     }
   });
@@ -189,7 +195,7 @@ describe("turnarounds", () => {
       const r = analyze(legSession({ legs, noiseM }));
       expect(r.reps).toHaveLength(1);
       const rep = r.reps[0]!;
-      expect(Math.abs(rep.liftDurationS - 1)).toBeLessThan(0.3);
+      expect(Math.abs(rep.liftDurationS - 0.85)).toBeLessThan(0.05); // the lift alone: it was 0.92 to 1.93 s while it ran to the plateau's highest sample
       expect(relErr(rep.rangeOfMotionM, TRUE_ROM_M)).toBeLessThan(0.05);
       expect(relErr(rep.positiveWorkJ, TRUE_WORK_J)).toBeLessThan(0.05);
       expect(relErr(-rep.negativeWorkJ, TRUE_WORK_J)).toBeLessThan(0.05);

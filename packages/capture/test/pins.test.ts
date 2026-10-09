@@ -96,11 +96,12 @@ describe("an asymmetric session: rep that rises 0.5 m and comes back only 0.35 m
     const r = analyze(asymmetric(0.6, 1.4));
     expect(r.reps).toHaveLength(3);
     for (const rep of r.reps) {
-      expect(Math.abs(percent(rep.rangeOfMotionM, 0.5))).toBeLessThan(5);
-      expect(Math.abs(percent(rep.positiveWorkJ, MG * 0.5))).toBeLessThan(6);
-      expect(Math.abs(percent(rep.negativeWorkJ, -MG * 0.35))).toBeLessThan(6);
+      // bounds are twice the measurement: ROM +0.22 %, W+ +0.10 %, W- -0.30 %, peak -1.99 %
+      expect(Math.abs(percent(rep.rangeOfMotionM, 0.5))).toBeLessThan(0.5);
+      expect(Math.abs(percent(rep.positiveWorkJ, MG * 0.5))).toBeLessThan(0.5);
+      expect(Math.abs(percent(rep.negativeWorkJ, -MG * 0.35))).toBeLessThan(0.6);
       expect(rep.positiveWorkJ).toBeGreaterThan(-rep.negativeWorkJ * 1.3); // 49 vs 34: positive is not |negative|
-      expect(Math.abs(percent(rep.peakForceN, 178.3))).toBeLessThan(5);
+      expect(Math.abs(percent(rep.peakForceN, 178.3))).toBeLessThan(4);
     }
   });
 
@@ -112,20 +113,20 @@ describe("an asymmetric session: rep that rises 0.5 m and comes back only 0.35 m
     const r = analyze(asymmetric(1.4, 0.6));
     expect(r.reps).toHaveLength(3);
     for (const rep of r.reps) {
-      expect(Math.abs(percent(rep.peakForceN, 154.2))).toBeLessThan(5);
+      expect(Math.abs(percent(rep.peakForceN, 154.2))).toBeLessThan(3.2); // measured -1.58 %
       expect(rep.peakForceN).toBeGreaterThan(130);
-      expect(Math.abs(percent(rep.rangeOfMotionM, 0.5))).toBeLessThan(5);
+      expect(Math.abs(percent(rep.rangeOfMotionM, 0.5))).toBeLessThan(0.55); // measured -0.26 %
     }
   });
 });
 
 describe("impulse", () => {
-  it("of a rep that starts and ends near rest is m g × durationS within 3 %", () => {
+  it("of a rep that starts and ends near rest is m g × durationS within 2 %", () => {
     // impulse = (m g) Δt + m Δv. The window starts and ends at about 0.1 m/s (3 mm into the lift), so m Δv is
     // about -1.8 N·s against 180: 1 % low (2.9 % at the pause's edge, 1.5 cm in). A doubled impulse is 100 % high.
     const r = analyze(syntheticSession({ reps: 3, heightM: 0.5, upS: 1, downS: 1, restS: 5, rateHz: 60, noiseM: 0, seed: 1, metersPerUnit: SCALE }));
     for (const rep of r.reps) {
-      expect(Math.abs(rep.impulseNs - MG * rep.durationS) / (MG * rep.durationS)).toBeLessThan(0.03);
+      expect(Math.abs(rep.impulseNs - MG * rep.durationS) / (MG * rep.durationS)).toBeLessThan(0.02); // measured 1.02 %
     }
   });
 });
