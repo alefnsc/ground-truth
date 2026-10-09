@@ -7,18 +7,23 @@
  * the filter runs forward then backward.
  */
 
+import { requireFinite } from "./internal";
+
 /** Measured in the physics review: 3–4 Hz for peak force on ~1 s lifts (packages/physics/README.md). */
 export const DEFAULT_CUTOFF_HZ = 4;
 
 /**
  * Padding on each side, in cutoff periods: a judgement call. The edge is extended by
  * three periods of the cutoff frequency, which is long enough for a second-order
- * Butterworth's start-up transient to die out before the first real sample.
+ * Butterworth's start-up transient to die out before the first real sample. Exported so
+ * the session gate (analyzeSession refuses a recording the padding would not fit in)
+ * and the filter use the same number.
  */
-const PADDING_CUTOFF_PERIODS = 3;
+export const PADDING_CUTOFF_PERIODS = 3;
 
-function requireFinite(name: string, value: number): void {
-  if (!Number.isFinite(value)) throw new RangeError(`${name} must be a finite number, got ${value}`);
+/** Samples of padding on each side for a cutoff at a rate; a signal must be LONGER than this to be filtered. */
+export function filterPaddingSamples(rateHz: number, cutoffHz: number): number {
+  return Math.ceil((PADDING_CUTOFF_PERIODS * rateHz) / cutoffHz);
 }
 
 interface Biquad {
@@ -80,7 +85,7 @@ export function lowPassZeroPhase(values: readonly number[], rateHz: number, cuto
     throw new RangeError(`cutoffHz must be > 0 and below rateHz / 2 (${rateHz / 2}), got ${cutoffHz}`);
   }
   values.forEach((v, i) => requireFinite(`values[${i}]`, v));
-  const pad = Math.ceil((PADDING_CUTOFF_PERIODS * rateHz) / cutoffHz);
+  const pad = filterPaddingSamples(rateHz, cutoffHz);
   if (values.length <= pad) {
     throw new RangeError(`values must contain more than ${pad} samples for a ${cutoffHz} Hz cutoff at ${rateHz} Hz, got ${values.length}`);
   }

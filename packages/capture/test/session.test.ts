@@ -201,7 +201,7 @@ describe("analyzeSession: refusal", () => {
 });
 
 describe("analyzeSession: confidence", () => {
-  it("is LOW below 30 Hz and above 5 % low-visibility frames, MEDIUM at the boundaries, HIGH from 50 Hz with at most 2 %", () => {
+  it("is LOW below 27 Hz and above 5 % low-visibility frames, MEDIUM from 27 Hz, HIGH from 45 Hz with at most 2 %", () => {
     const base = (rateHz: number) => session({ noiseM: 0.002, rateHz });
     expect(ok(analyze(base(25))).provenance.confidence).toBe("LOW");
     expect(ok(analyze(base(30))).provenance.confidence).toBe("MEDIUM");
@@ -211,6 +211,20 @@ describe("analyzeSession: confidence", () => {
     expect(ok(analyze(loseFrames(base(60), 60))).provenance.confidence).toBe("HIGH");
     expect(ok(analyze(loseFrames(base(60), 33))).provenance.confidence).toBe("MEDIUM");
     expect(ok(analyze(loseFrames(base(60), 16))).provenance.confidence).toBe("LOW");
+  });
+
+  it("the nominal camera rates sit inside their grade, not on its edge: 29.97 and 30.3 grade alike, 59.94 and 50 grade alike", () => {
+    const grade = (rateHz: number) => ok(analyze(session({ noiseM: 0.002, rateHz }))).provenance.confidence;
+    expect(grade(29.97)).toBe(grade(30.3));
+    expect(grade(29.97)).toBe("MEDIUM");
+    expect(grade(59.94)).toBe(grade(50));
+    expect(grade(59.94)).toBe("HIGH");
+  });
+
+  it("23.976 fps is accepted and 15 fps is refused", () => {
+    expect(ok(analyze(session({ noiseM: 0.002, rateHz: 23.976 }))).provenance.confidence).toBe("LOW");
+    const r = analyze(session({ rateHz: 15 }));
+    expect(r.ok).toBe(false);
   });
 });
 

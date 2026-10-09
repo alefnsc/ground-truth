@@ -7,8 +7,12 @@ import type { PoseFrame } from "./frames";
 
 export type RefusalReason = "NO_SCALE" | "LOW_FRAME_RATE" | "LANDMARK_LOST" | "GAP_TOO_LONG" | "TOO_SHORT";
 
-/** Judgement call: below this a 1 s lift has too few samples. */
-export const MIN_RATE_HZ = 24;
+/**
+ * Judgement call: below this a 1 s lift has too few samples. Set under every nominal
+ * camera rate (23.976, 24, 25, 29.97, 30), which a median of measured timestamps can land
+ * a hair either side of, so no real camera is refused or graded by rounding.
+ */
+export const MIN_RATE_HZ = 20;
 /** Judgement call: a frame whose landmark visibility is below this is not trusted. */
 export const VISIBILITY_THRESHOLD = 0.5;
 /** Judgement call. */
@@ -23,21 +27,40 @@ export interface QualityReport {
   lowVisibilityFraction: number;
   longestGapS: number; // longest run of missing or low-visibility time
   durationS: number;
+  /** Frames discarded before assessing because their timestamp was not finite or not greater than the last kept one (a video frame processed twice, or delivered out of order). */
+  droppedFrames: number;
   reasons: RefusalReason[]; // empty when acceptable
 }
 
-function validateFrames(frames: readonly PoseFrame[]): void {
-  let previousT = Number.NEGATIVE_INFINITY;
-  frames.forEach((f, i) => {
-    if (!Number.isFinite(f.tS)) throw new RangeError(`frames[${i}].tS must be a finite number, got ${f.tS}`);
-    if (f.tS <= previousT) {
-      throw new RangeError(`frames[${i}].tS must be greater than frames[${i - 1}].tS (time must be strictly increasing)`);
-    }
-    previousT = f.tS;
-    if (!Number.isFinite(f.visibility) || f.visibility < 0 || f.visibility > 1) {
-      throw new RangeError(`frames[${i}].visibility must be within [0, 1], got ${f.visibility}`);
-    }
-  });
+/**
+ * A wristY this large is not an image coordinate (normalised ones are within a few frame
+ * widths of 0..1): the frame is garbage and counts as a lost landmark. It also keeps
+ * interpolation and the metre conversion from overflowing.
+ */
+const MAX_ABS_WRIST_Y = 1e6;
+
+/**
+ * Judgement call: the uniform grid may hold at most this many samples per frame delivered.
+ * A real stream has about one (a hole of a quarter of a second at most still leaves 0.5);
+ * timestamps whose median spacing is far tighter than their overall spacing would otherwise
+ * ask resampleUniform for millions of samples.
+ */
+const MAX_GRID_SAMPLES_PER_FRAME = 4;
+
+/**
+ * The frames in strictly increasing time, and how many were dropped to get there. A frame
+ * is dropped when its timestamp is not finite or not greater than the last frame kept (a
+ * duplicate, or one delivered out of order). Nothing about frame content throws.
+ */
+function inTimeOrder(frames: readonly PoseFrame[]): { kept: PoseFrame[]; dropped: number } {
+  const kept: PoseFrame[] = [];
+  let lastT = Number.NEGATIVE_INFINITY;
+  for (const f of frames) {
+    if (!Number.isFinite(f.tS) || f.tS <= lastT) continue;
+    kept.push(f);
+    lastT = f.tS;
+  }
+  return { kept, dropped: frames.length - kept.length };
 }
 
 /**
@@ -52,7 +75,9 @@ function medianRateHz(frames: readonly PoseFrame[]): number {
   return 1 / medianDt;
 }
 
-const isVisible = (f: PoseFrame): boolean => f.visibility >= VISIBILITY_THRESHOLD;
+/** A frame the pipeline may use: a finite wristY and a visibility at or above the threshold (NaN fails the comparison). */
+const isVisible = (f: PoseFrame): boolean =>
+  Number.isFinite(f.wristY) && Math.abs(f.wristY) < MAX_ABS_WRIST_Y && f.visibility >= VISIBILITY_THRESHOLD;
 
 /**
  * Gaps are measured between usable frames: the time from one visible frame to the next
@@ -80,38 +105,38 @@ function longestGapS(frames: readonly PoseFrame[]): number {
 }
 
 export function assessQuality(frames: readonly PoseFrame[], hasScale: boolean): QualityReport {
-  validateFrames(frames);
-  const rateHz = medianRateHz(frames);
-  const lowVisibilityFraction = frames.length === 0 ? 0 : frames.filter((f) => !isVisible(f)).length / frames.length;
-  const gapS = longestGapS(frames);
-  const durationS = frames.length < 2 ? 0 : (frames[frames.length - 1] as PoseFrame).tS - (frames[0] as PoseFrame).tS;
+  const { kept, dropped } = inTimeOrder(frames);
+  const rateHz = medianRateHz(kept);
+  const lowVisibilityFraction = kept.length === 0 ? 0 : kept.filter((f) => !isVisible(f)).length / kept.length;
+  const droppedFraction = frames.length === 0 ? 0 : dropped / frames.length;
+  const gapS = longestGapS(kept);
+  const durationS = kept.length < 2 ? 0 : (kept[kept.length - 1] as PoseFrame).tS - (kept[0] as PoseFrame).tS;
 
   const reasons: RefusalReason[] = [];
   if (!hasScale) reasons.push("NO_SCALE");
-  // 1/(1/24) is not exactly 24 in floating point; a camera running at exactly the minimum must pass.
-  if (rateHz < MIN_RATE_HZ * (1 - 1e-9)) reasons.push("LOW_FRAME_RATE");
-  if (lowVisibilityFraction > MAX_LOW_VISIBILITY_FRACTION) reasons.push("LANDMARK_LOST");
+  // The effective rate is what was delivered: a median spacing far tighter than the stream's overall spacing is no frame rate.
+  const gridTooDense = rateHz * durationS + 1 > MAX_GRID_SAMPLES_PER_FRAME * kept.length;
+  if (rateHz < MIN_RATE_HZ || gridTooDense) reasons.push("LOW_FRAME_RATE");
+  // Frames dropped for their timestamps are lost frames too: too many of them is a stream that cannot be trusted.
+  if (lowVisibilityFraction > MAX_LOW_VISIBILITY_FRACTION || droppedFraction > MAX_LOW_VISIBILITY_FRACTION) reasons.push("LANDMARK_LOST");
   if (gapS > MAX_GAP_S) reasons.push("GAP_TOO_LONG");
   if (durationS < MIN_DURATION_S) reasons.push("TOO_SHORT");
 
-  return { rateHz, lowVisibilityFraction, longestGapS: gapS, durationS, reasons };
+  return { rateHz, lowVisibilityFraction, longestGapS: gapS, durationS, droppedFrames: dropped, reasons };
 }
 
 /**
- * Drops low-visibility frames (their wristY is never read), then linearly interpolates
+ * Drops frames that are not in time order and low-visibility frames (their wristY is never read), then linearly interpolates
  * onto a uniform grid at the median frame rate. The grid runs from the first to the last
  * visible frame: nothing is extrapolated. tS is on the frames' own clock.
  */
 export function resampleUniform(frames: readonly PoseFrame[]): { rateHz: number; tS: number[]; wristY: number[] } {
-  validateFrames(frames);
-  const rateHz = medianRateHz(frames);
-  const kept = frames.filter(isVisible);
+  const ordered = inTimeOrder(frames).kept;
+  const rateHz = medianRateHz(ordered);
+  const kept = ordered.filter(isVisible);
   if (kept.length < 2) {
-    throw new RangeError(`frames must contain at least 2 frames with visibility >= ${VISIBILITY_THRESHOLD}, got ${kept.length}`);
+    throw new RangeError(`frames must contain at least 2 usable frames (finite time and wristY, visibility >= ${VISIBILITY_THRESHOLD}), got ${kept.length}`);
   }
-  kept.forEach((f) => {
-    if (!Number.isFinite(f.wristY)) throw new RangeError(`wristY of a visible frame must be a finite number, got ${f.wristY}`);
-  });
 
   const t0 = (kept[0] as PoseFrame).tS;
   const tEnd = (kept[kept.length - 1] as PoseFrame).tS;

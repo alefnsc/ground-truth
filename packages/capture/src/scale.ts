@@ -7,6 +7,7 @@
  */
 
 import type { PoseFrame } from "./frames";
+import { requireFinite } from "./internal";
 
 /**
  * Eye-to-ankle distance as a fraction of stature: eye height 0.936·H minus ankle
@@ -20,10 +21,6 @@ export const EYE_TO_ANKLE_FRACTION_OF_STATURE = 0.897;
 
 /** Judgement call: a calibration frame in which the person fills under a fifth of the frame height is too coarse to scale from. */
 export const MIN_CALIBRATION_SPAN = 0.2;
-
-function requireFinite(name: string, value: number): void {
-  if (!Number.isFinite(value)) throw new RangeError(`${name} must be a finite number, got ${value}`);
-}
 
 /**
  * Metres per normalised image unit from a side-on, upright calibration frame:

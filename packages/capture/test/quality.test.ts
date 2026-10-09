@@ -30,8 +30,8 @@ const every = (frames: readonly PoseFrame[], k: number, offset = 3): number[] =>
   frames.map((_, i) => i).filter((i) => i % k === offset);
 
 describe("thresholds", () => {
-  it("are the plan's values", () => {
-    expect(MIN_RATE_HZ).toBe(24);
+  it("are the plan's values, except the frame-rate floor, which sits below the nominal camera rates (20 Hz)", () => {
+    expect(MIN_RATE_HZ).toBe(20);
     expect(VISIBILITY_THRESHOLD).toBe(0.5);
     expect(MAX_LOW_VISIBILITY_FRACTION).toBe(0.1);
     expect(MAX_GAP_S).toBe(0.25);
@@ -47,16 +47,17 @@ describe("assessQuality", () => {
     expect(q.durationS).toBeCloseTo(6, 9);
     expect(q.lowVisibilityFraction).toBe(0);
     expect(q.longestGapS).toBeCloseTo(1 / 60, 9);
+    expect(q.droppedFrames).toBe(0);
   });
 
   it("the same without a scale: only NO_SCALE", () => {
     expect(assessQuality(clean(60, 6), false).reasons).toEqual(["NO_SCALE"]);
   });
 
-  it("15 Hz includes LOW_FRAME_RATE; 24 Hz does not", () => {
+  it("15 Hz includes LOW_FRAME_RATE; the nominal 23.976, 24, 25, 29.97 and 30 fps do not", () => {
     expect(assessQuality(clean(15, 6), true).reasons).toContain("LOW_FRAME_RATE");
     expect(assessQuality(clean(15, 6), true).reasons).toEqual(["LOW_FRAME_RATE"]);
-    expect(assessQuality(clean(24, 6), true).reasons).toEqual([]);
+    for (const rateHz of [20, 23.976, 24, 25, 29.97, 30]) expect(assessQuality(clean(rateHz, 6), true).reasons).toEqual([]);
   });
 
   it("15 % of frames at visibility 0.2, scattered, includes LANDMARK_LOST (and nothing about gaps)", () => {
@@ -148,13 +149,49 @@ describe("assessQuality", () => {
     }
   });
 
-  it("rejects non-increasing or non-finite timestamps and visibility outside 0..1", () => {
-    const f = clean(60, 2);
-    expect(() => assessQuality([f[0]!, f[0]!, f[1]!], true)).toThrow(RangeError);
-    expect(() => assessQuality([f[0]!, f[0]!, f[1]!], true)).toThrow(/frames\[1\]\.tS/);
-    expect(() => assessQuality([f[0]!, { ...f[1]!, tS: Number.NaN }], true)).toThrow(/tS/);
-    expect(() => assessQuality([f[0]!, { ...f[1]!, visibility: 1.5 }], true)).toThrow(/visibility/);
-    expect(() => assessQuality([f[0]!, { ...f[1]!, visibility: Number.NaN }], true)).toThrow(/visibility/);
+  it("a frame processed twice (same timestamp) is dropped and counted, not thrown on", () => {
+    const frames = clean(60, 6);
+    const doubled = frames.flatMap((f, i) => (i % 50 === 7 ? [f, { ...f }] : [f])); // 2 % of the stream repeated
+    const q = assessQuality(doubled, true);
+    expect(q.droppedFrames).toBe(frames.filter((_, i) => i % 50 === 7).length);
+    expect(q.rateHz).toBeCloseTo(60, 6);
+    expect(q.reasons).toEqual([]);
+  });
+
+  it("an out-of-order frame (a timestamp before the previous one) is dropped and counted", () => {
+    const f = clean(60, 6);
+    const q = assessQuality([...f.slice(0, 100), f[50]!, ...f.slice(100)], true);
+    expect(q.droppedFrames).toBe(1);
+    expect(q.rateHz).toBeCloseTo(60, 6);
+    expect(q.reasons).toEqual([]);
+  });
+
+  it("more than MAX_LOW_VISIBILITY_FRACTION of the stream dropped for its timestamps is LANDMARK_LOST", () => {
+    const f = clean(60, 6);
+    const doubled = f.flatMap((x, i) => (i % 6 === 0 ? [x, { ...x }] : [x])); // 1 in 6 repeated: 16.7 %
+    const q = assessQuality(doubled, true);
+    expect(q.droppedFrames).toBe(f.filter((_, i) => i % 6 === 0).length);
+    expect(q.droppedFrames / doubled.length).toBeGreaterThan(MAX_LOW_VISIBILITY_FRACTION);
+    expect(q.reasons).toEqual(["LANDMARK_LOST"]);
+  });
+
+  it("a non-finite timestamp is dropped; a non-finite or out-of-range visibility or a non-finite wristY is a lost landmark", () => {
+    const f = clean(60, 6);
+    const q = assessQuality([f[0]!, { ...f[1]!, tS: Number.NaN }, ...f.slice(2)], true);
+    expect(q.droppedFrames).toBe(1);
+    expect(q.reasons).toEqual([]);
+    const lost = assessQuality(
+      f.map((x, i) => (i === 10 ? { ...x, visibility: Number.NaN } : i === 20 ? { ...x, wristY: Number.NaN } : i === 30 ? { ...x, visibility: -1 } : x)),
+      true,
+    );
+    expect(lost.lowVisibilityFraction).toBeCloseTo(3 / f.length, 9);
+    expect(lost.droppedFrames).toBe(0);
+  });
+
+  it("timestamps in milliseconds are refused, not thrown on: the frame rate reads as 0.06 Hz", () => {
+    const ms = clean(60, 6).map((x) => ({ ...x, tS: x.tS * 1000 }));
+    const q = assessQuality(ms, true);
+    expect(q.reasons).toContain("LOW_FRAME_RATE");
   });
 });
 
@@ -211,6 +248,15 @@ describe("resampleUniform", () => {
     const out = resampleUniform(frames);
     expect(out.tS[0]).toBeCloseTo(3 / 60, 12);
     expect(out.tS[out.tS.length - 1]!).toBeCloseTo(177 / 60, 9);
+  });
+
+  it("a stream with frames repeated or out of order is resampled from the frames that are in time order", () => {
+    const line = (t: number) => 0.3 + 0.1 * t;
+    const base: PoseFrame[] = Array.from({ length: 181 }, (_, i) => ({ tS: i / 60, wristY: line(i / 60), visibility: 1 }));
+    const messy = [...base.slice(0, 50), base[10]!, base[50]!, ...base.slice(50)];
+    const out = resampleUniform(messy);
+    expect(out.tS).toHaveLength(181);
+    out.tS.forEach((t, k) => expect(out.wristY[k]!).toBeCloseTo(line(t), 9));
   });
 
   it("needs at least two visible frames", () => {

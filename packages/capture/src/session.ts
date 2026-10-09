@@ -8,17 +8,22 @@
 
 import { trajectoryWork, type Confidence, type Provenance } from "@ground-truth/physics";
 import type { PoseFrame } from "./frames";
-import { lowPassZeroPhase } from "./filter";
+import { DEFAULT_CUTOFF_HZ, filterPaddingSamples, lowPassZeroPhase } from "./filter";
 import { assessQuality, resampleUniform, type QualityReport, type RefusalReason } from "./quality";
+import { requireFinite } from "./internal";
 import { toMetersUp } from "./scale";
 import { segmentReps, type Rep } from "./segment";
 
-/** Judgement call: HIGH confidence needs a frame rate of at least this. */
-export const HIGH_CONFIDENCE_MIN_RATE_HZ = 50;
+/**
+ * Judgement call: HIGH confidence needs a frame rate of at least this. The grade
+ * thresholds sit between the nominal camera rates (30 / 29.97 fps, 50 / 59.94 / 60 fps),
+ * never on one, so a measured 29.97 and a nominal 30 grade alike.
+ */
+export const HIGH_CONFIDENCE_MIN_RATE_HZ = 45;
 /** Judgement call: HIGH confidence allows at most this fraction of low-visibility frames. */
 export const HIGH_CONFIDENCE_MAX_LOW_VISIBILITY = 0.02;
 /** Judgement call: a frame rate below this is LOW confidence. */
-export const LOW_CONFIDENCE_BELOW_RATE_HZ = 30;
+export const LOW_CONFIDENCE_BELOW_RATE_HZ = 27;
 /** Judgement call: more than this fraction of low-visibility frames is LOW confidence. */
 export const LOW_CONFIDENCE_ABOVE_LOW_VISIBILITY = 0.05;
 
@@ -70,14 +75,11 @@ export type SessionResult =
     }
   | { ok: false; reasons: RefusalReason[]; quality: QualityReport };
 
-// 1/(1/30) is not exactly 30 in floating point; a camera running at exactly a boundary belongs to the middle band.
-const RATE_EPSILON = 1e-9;
-
 function confidenceOf(quality: QualityReport): Confidence {
-  if (quality.rateHz < LOW_CONFIDENCE_BELOW_RATE_HZ * (1 - RATE_EPSILON) || quality.lowVisibilityFraction > LOW_CONFIDENCE_ABOVE_LOW_VISIBILITY) {
+  if (quality.rateHz < LOW_CONFIDENCE_BELOW_RATE_HZ || quality.lowVisibilityFraction > LOW_CONFIDENCE_ABOVE_LOW_VISIBILITY) {
     return "LOW";
   }
-  if (quality.rateHz >= HIGH_CONFIDENCE_MIN_RATE_HZ * (1 - RATE_EPSILON) && quality.lowVisibilityFraction <= HIGH_CONFIDENCE_MAX_LOW_VISIBILITY) {
+  if (quality.rateHz >= HIGH_CONFIDENCE_MIN_RATE_HZ && quality.lowVisibilityFraction <= HIGH_CONFIDENCE_MAX_LOW_VISIBILITY) {
     return "HIGH";
   }
   return "MEDIUM";
@@ -168,15 +170,27 @@ export function analyzeSession(frames: readonly PoseFrame[], options: SessionOpt
     throw new RangeError(`metersPerUnit must be a finite number > 0, or null, got ${metersPerUnit}`);
   }
 
+  if (options.cutoffHz !== undefined) {
+    requireFinite("cutoffHz", options.cutoffHz);
+    if (options.cutoffHz <= 0) throw new RangeError(`cutoffHz must be > 0, got ${options.cutoffHz}`);
+  }
+
   const quality = assessQuality(frames, metersPerUnit !== null);
   if (quality.reasons.length > 0 || metersPerUnit === null) {
     return { ok: false, reasons: quality.reasons, quality };
   }
 
   const grid = resampleUniform(frames);
+  // The filter needs more samples than its padding; a recording shorter than that is TOO_SHORT (at the cutoff asked for).
+  const cutoffHz = options.cutoffHz ?? DEFAULT_CUTOFF_HZ;
+  if (cutoffHz >= grid.rateHz / 2) throw new RangeError(`cutoffHz must be below rateHz / 2 (${grid.rateHz / 2}), got ${cutoffHz}`);
+  if (grid.tS.length <= filterPaddingSamples(grid.rateHz, cutoffHz)) {
+    const reasons: RefusalReason[] = ["TOO_SHORT"];
+    return { ok: false, reasons, quality: { ...quality, reasons } };
+  }
   const uniform: PoseFrame[] = grid.tS.map((tS, i) => ({ tS, wristY: grid.wristY[i] as number, visibility: 1 }));
   const metres = toMetersUp(uniform, metersPerUnit);
-  const smoothed = lowPassZeroPhase(metres.map((p) => p.yM), grid.rateHz, options.cutoffHz);
+  const smoothed = lowPassZeroPhase(metres.map((p) => p.yM), grid.rateHz, cutoffHz);
   const samples = metres.map((p, i) => ({ tS: p.tS, yM: smoothed[i] as number }));
   const t0 = (frames[0] as PoseFrame).tS;
 
