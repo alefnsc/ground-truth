@@ -610,6 +610,8 @@ where real validation would come from.
 
 ## 10. The demo
 
+> For the demo, see [`demo-script.md`](demo-script.md): it uses the numbers the model computes. The script below asserts outcomes (for example "Energy barely moves") that the physics does not produce.
+
 One screen. A gravity selector: **Earth · Moon · Mars · ISS**. A session list
 below it. Two large numbers at the top: **Energy** and **Load**.
 

@@ -56,6 +56,9 @@ export interface Person {
   legLengthM: number;
 }
 
+/** The person the demo starts with: 78.4 kg (the brief's example mass) and a 0.9 m leg. */
+export const DEFAULT_PERSON: Person = { massKg: 78.4, legLengthM: 0.9 };
+
 export interface Env {
   body: Body;
   gEnvMs2: number;

@@ -8,6 +8,7 @@ import { LOAD_RESTS_ON, computeDay, deficitOverMission, missingEarthDays, partia
 import {
   CAMERA_PEAK_SCOPE,
   CYCLE_DEFAULTS,
+  DEFAULT_PERSON,
   ENVS,
   PARAM_FIELDS,
   SQUAT_DEFAULTS,
@@ -75,8 +76,8 @@ interface CardRefs {
 export function mountCurrencies(root: HTMLElement): CurrenciesView {
   const state: State = {
     body: "EARTH",
-    massKg: 78.4,
-    legLengthM: 0.9,
+    massKg: DEFAULT_PERSON.massKg,
+    legLengthM: DEFAULT_PERSON.legLengthM,
     days: HORIZON.iss,
     presets: [
       { kind: "treadmill", title: "Treadmill run", included: true },
