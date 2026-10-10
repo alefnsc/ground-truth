@@ -1,11 +1,12 @@
 import "./styles.css";
+import { mountCapture } from "./view/capture";
 import { mountCurrencies } from "./view/currencies";
 
 /**
  * Tabs: role=tablist / tab / tabpanel, one tab in the tab order at a time, arrow keys
  * (and Home / End) move between them and activate, as in the WAI-ARIA tabs pattern.
  */
-function wireTabs(tablist: HTMLElement): void {
+function wireTabs(tablist: HTMLElement, onSelect: (tab: HTMLButtonElement) => void): void {
   const tabs = Array.from(tablist.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
 
   function select(selected: HTMLButtonElement, focus: boolean): void {
@@ -17,6 +18,7 @@ function wireTabs(tablist: HTMLElement): void {
       if (panel) panel.hidden = !isSelected;
     }
     if (focus) selected.focus();
+    onSelect(selected);
   }
 
   for (const tab of tabs) {
@@ -36,8 +38,11 @@ function wireTabs(tablist: HTMLElement): void {
   }
 }
 
-const tablist = document.querySelector<HTMLElement>('[role="tablist"]');
-if (tablist) wireTabs(tablist);
-
 const currenciesPanel = document.getElementById("panel-currencies");
-if (currenciesPanel) mountCurrencies(currenciesPanel);
+const capturePanel = document.getElementById("panel-capture");
+const currencies = currenciesPanel ? mountCurrencies(currenciesPanel) : null;
+const capture = capturePanel && currencies ? mountCapture(capturePanel, (session) => currencies.addSession(session)) : null;
+
+const tablist = document.querySelector<HTMLElement>('[role="tablist"]');
+// Leaving the Capture tab releases the camera.
+if (tablist) wireTabs(tablist, (tab) => tab.id !== "tab-capture" && capture?.release());

@@ -65,3 +65,14 @@ export function calibrationFromLandmarks(landmarks: readonly Landmark[], side: S
   if (!Number.isFinite(eye.y) || !Number.isFinite(ankle.y)) return null;
   return { eyeY: eye.y, ankleY: ankle.y };
 }
+
+/** The wrist landmark of the chosen side, for drawing. Undefined when the pose stops before it. */
+export function wristOf(landmarks: readonly Landmark[] | undefined, side: Side): Landmark | undefined {
+  return landmarks?.[side === "LEFT" ? LANDMARK.LEFT_WRIST : LANDMARK.RIGHT_WRIST];
+}
+
+/** A pointer's height over an element as a fraction of that element's height, 0 at the top, clamped to 0..1. */
+export function normalizedY(clientY: number, top: number, height: number): number {
+  if (!(height > 0)) return 0;
+  return Math.min(1, Math.max(0, (clientY - top) / height));
+}

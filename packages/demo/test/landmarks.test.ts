@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LANDMARK, calibrationFromLandmarks, pickSide, toPoseFrame, type Landmark } from "../src/pose/landmarks";
+import { LANDMARK, calibrationFromLandmarks, normalizedY, pickSide, toPoseFrame, wristOf, type Landmark } from "../src/pose/landmarks";
 
 /** A full 33-landmark pose, all at (0.5, 0.5) and fully visible, with overrides by index. */
 function pose(overrides: Record<number, Partial<Landmark>> = {}): Landmark[] {
@@ -98,5 +98,28 @@ describe("calibrationFromLandmarks", () => {
     const l = pose();
     l[27] = { x: 0.5, y: 0.9 };
     expect(calibrationFromLandmarks(l, "LEFT")).toBeNull();
+  });
+});
+
+describe("wristOf", () => {
+  it("is the wrist of the side asked for, and undefined when there is none", () => {
+    const l = pose({ 15: { x: 0.2 }, 16: { x: 0.8 } });
+    expect(wristOf(l, "LEFT")?.x).toBe(0.2);
+    expect(wristOf(l, "RIGHT")?.x).toBe(0.8);
+    expect(wristOf(undefined, "LEFT")).toBeUndefined();
+    expect(wristOf(pose().slice(0, 10), "RIGHT")).toBeUndefined();
+  });
+});
+
+describe("normalizedY", () => {
+  it("is the fraction of the element's height from its top, clamped", () => {
+    expect(normalizedY(150, 100, 200)).toBe(0.25);
+    expect(normalizedY(100, 100, 200)).toBe(0);
+    expect(normalizedY(300, 100, 200)).toBe(1);
+    expect(normalizedY(50, 100, 200)).toBe(0);
+    expect(normalizedY(500, 100, 200)).toBe(1);
+  });
+  it("an element with no height gives 0, not NaN", () => {
+    expect(normalizedY(10, 0, 0)).toBe(0);
   });
 });

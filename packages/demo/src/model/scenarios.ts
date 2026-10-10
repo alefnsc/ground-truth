@@ -355,7 +355,7 @@ export function cycleErgometer(person: Person, _env: Env, p: CycleParams = CYCLE
     id: "cycle",
     title: "Cycle ergometer",
     energy: quantity(workJ, "J", "MODEL", "Displayed power corrected with the CEVIS dynamometer relation, P = 0.98 · displayed − 11.8 W (NASA/TP-2007-214760), integrated over the session. Same in every environment."),
-    peakLoad: quantity(null, "N", "MODEL", "No skeletal load term in this model: pedalling puts no meaningful peak force through the legs' bones."),
+    peakLoad: quantity(null, "N", "MODEL", "No skeletal load term in this model: the ergometer's resistance is not modelled as a peak force through the skeleton."),
     bout: null,
     details,
   };

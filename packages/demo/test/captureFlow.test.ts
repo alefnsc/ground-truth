@@ -1,0 +1,272 @@
+import { describe, expect, it } from "vitest";
+import type { PoseFrame, RepResult } from "@ground-truth/capture";
+import { syntheticSession } from "../../capture/test/helpers";
+import {
+  CONFIDENCE_SENTENCE,
+  SCALE_SENTENCE,
+  analyseRecording,
+  captureInputProblem,
+  refusalSentences,
+  repNotes,
+  scaleFrom,
+  transition,
+  type CaptureInputs,
+  type FlowEvent,
+  type FlowState,
+} from "../src/model/captureFlow";
+
+/*
+ * Synthetic lifts: a 10 kg load, 0.5 m minimum-jerk lifts of 1 s with 1 s lowerings and rests, 60 Hz, Earth,
+ * 2.5 m per frame height. Hand-derived truth per rep:
+ *   positive work = m g h = 10 × 9.81 × 0.5 = 49.05 J, so three reps = 147.15 J
+ *   peak force    = m (g + a_peak), a_peak = (10 / √3) h / T² = 5.7735 × 0.5 / 1² = 2.8868 m/s²,
+ *                   so 10 × (9.81 + 2.8868) = 126.97 N
+ * The capture package trims the window and filters at 4 Hz, which costs about 0.5 % of work; the checks
+ * below allow 3 %. The numbers are not read off the code.
+ */
+const lift = { reps: 3, heightM: 0.5, upS: 1, downS: 1, restS: 1, rateHz: 60, noiseM: 0, seed: 1, metersPerUnit: 2.5 };
+const earth: CaptureInputs = { massKg: 10, gEnvMs2: 9.81, deviceForceN: 0, metersPerUnit: 2.5 };
+const label = { id: "camera-1", title: "Camera set" };
+
+describe("flow state machine", () => {
+  const path: [FlowState, FlowEvent, FlowState][] = [
+    ["idle", "openSource", "calibrating"],
+    ["calibrating", "calibrated", "ready"],
+    ["ready", "recalibrate", "calibrating"],
+    ["ready", "start", "recording"],
+    ["recording", "analysed", "analysed"],
+    ["recording", "refused", "refused"],
+    ["analysed", "openSource", "calibrating"],
+    ["refused", "openSource", "calibrating"],
+  ];
+  it.each(path)("%s --%s--> %s", (from, event, to) => {
+    expect(transition(from, event)).toBe(to);
+  });
+
+  it("reset returns to idle from anywhere", () => {
+    for (const s of ["idle", "calibrating", "ready", "recording", "analysed", "refused"] as const) {
+      expect(transition(s, "reset")).toBe("idle");
+    }
+  });
+
+  it("an event that does not apply leaves the state alone (no recording before a scale, no stop when not recording)", () => {
+    expect(transition("idle", "start")).toBe("idle");
+    expect(transition("calibrating", "start")).toBe("calibrating");
+    expect(transition("ready", "analysed")).toBe("ready");
+    expect(transition("analysed", "start")).toBe("analysed");
+  });
+
+  it("walks idle to analysed", () => {
+    const events: FlowEvent[] = ["openSource", "calibrated", "start", "analysed"];
+    expect(events.reduce<FlowState>((s, e) => transition(s, e), "idle")).toBe("analysed");
+  });
+});
+
+describe("scale", () => {
+  it("known length: 0.30 m over a span of 0.30 of the frame is 1.0 m per frame height, tagged ESTIMATE", () => {
+    const s = scaleFrom({ kind: "known-length", lengthM: 0.3, yA: 0.4, yB: 0.7 });
+    expect(s.ok).toBe(true);
+    if (!s.ok) return;
+    expect(s.metersPerUnit).toBeCloseTo(1.0, 12);
+    expect(s.quantity.tag).toBe("ESTIMATE");
+    expect(s.quantity.value).toBeCloseTo(1.0, 12);
+    expect(s.quantity.note).toContain(SCALE_SENTENCE);
+    expect(s.quantity.note).toMatch(/known length/i);
+  });
+
+  it("stature: 0.897 × 1.75 / (0.92 − 0.12) = 1.56975 / 0.8 = 1.9621875 m per frame height", () => {
+    const s = scaleFrom({ kind: "stature", statureM: 1.75, eyeY: 0.12, ankleY: 0.92 });
+    expect(s.ok).toBe(true);
+    if (!s.ok) return;
+    expect(s.metersPerUnit).toBeCloseTo(1.9621875, 9);
+    expect(s.quantity.tag).toBe("ESTIMATE");
+    expect(s.quantity.note).toContain(SCALE_SENTENCE);
+    expect(s.quantity.note).toMatch(/stature/i);
+  });
+
+  it("a method that cannot give a scale says why and gives no number", () => {
+    const tooShort = scaleFrom({ kind: "known-length", lengthM: 0.3, yA: 0.5, yB: 0.52 });
+    expect(tooShort.ok).toBe(false);
+    if (!tooShort.ok) expect(tooShort.reason.length).toBeGreaterThan(10);
+    const inverted = scaleFrom({ kind: "stature", statureM: 1.75, eyeY: 0.9, ankleY: 0.2 });
+    expect(inverted.ok).toBe(false);
+    const nonsense = scaleFrom({ kind: "known-length", lengthM: -1, yA: 0.1, yB: 0.9 });
+    expect(nonsense.ok).toBe(false);
+    const nan = scaleFrom({ kind: "stature", statureM: Number.NaN, eyeY: 0.1, ankleY: 0.9 });
+    expect(nan.ok).toBe(false);
+  });
+});
+
+describe("inputs", () => {
+  it("accepts a mass, a gravity and a device force, and says what is wrong otherwise", () => {
+    expect(captureInputProblem(earth)).toBeNull();
+    expect(captureInputProblem({ ...earth, massKg: 0 })).toMatch(/mass/i);
+    expect(captureInputProblem({ ...earth, massKg: Number.NaN })).toMatch(/mass/i);
+    expect(captureInputProblem({ ...earth, deviceForceN: -5 })).toMatch(/force/i);
+    expect(captureInputProblem({ ...earth, gEnvMs2: -1 })).toMatch(/gravity/i);
+  });
+});
+
+describe("a recording that is analysed", () => {
+  const outcome = analyseRecording(syntheticSession(lift), earth, label);
+
+  it("becomes a camera SessionResult: MEASURED energy and peak load, and a bout of the reps", () => {
+    expect(outcome.kind).toBe("analysed");
+    if (outcome.kind !== "analysed") return;
+    const s = outcome.session;
+    expect(s.id).toBe("camera-1");
+    expect(s.title).toBe("Camera set");
+    expect(s.energy.tag).toBe("MEASURED");
+    expect(s.peakLoad.tag).toBe("MEASURED");
+    expect(s.energy.value as number).toBeGreaterThan(147.15 * 0.97);
+    expect(s.energy.value as number).toBeLessThan(147.15 * 1.03);
+    expect(s.peakLoad.value as number).toBeGreaterThan(126.97 * 0.97);
+    expect(s.peakLoad.value as number).toBeLessThan(126.97 * 1.03);
+    expect(s.bout?.cycles).toBe(3);
+    expect(s.bout?.peakLoad).toBe(s.peakLoad.value);
+    expect(outcome.reps).toHaveLength(3);
+  });
+
+  it("carries the inputs and the caveats in its details, each with a tag and a note", () => {
+    if (outcome.kind !== "analysed") throw new Error("expected analysed");
+    const labels = outcome.session.details.map((d) => d.label);
+    expect(labels).toEqual(expect.arrayContaining(["Mass of the weight", "Gravity", "Scale", "Reps detected"]));
+    const scale = outcome.session.details.find((d) => d.label === "Scale");
+    expect(scale?.tag).toBe("ESTIMATE");
+    expect(scale?.note).toContain(SCALE_SENTENCE);
+    const reps = outcome.session.details.find((d) => d.label === "Reps detected");
+    expect(reps?.note).toContain(CONFIDENCE_SENTENCE);
+    for (const d of outcome.session.details) expect(d.note.trim().length).toBeGreaterThan(0);
+  });
+
+  it("the scale note says once that scale is the largest error, whether or not the caller's note already did", () => {
+    const withNote = analyseRecording(syntheticSession(lift), { ...earth, scaleNote: `From a known length. ${SCALE_SENTENCE}` }, label);
+    const without = analyseRecording(syntheticSession(lift), { ...earth, scaleNote: "From a known length." }, label);
+    for (const o of [withNote, without]) {
+      if (o.kind !== "analysed") throw new Error("expected analysed");
+      const note = o.session.details.find((d) => d.label === "Scale")?.note ?? "";
+      expect(note.split(SCALE_SENTENCE)).toHaveLength(2);
+    }
+  });
+
+  it("reports confidence with the sentence that it grades conditions, not accuracy", () => {
+    if (outcome.kind !== "analysed") throw new Error("expected analysed");
+    expect(["LOW", "MEDIUM"]).toContain(outcome.confidence); // capped at MEDIUM until validated on real video
+    expect(outcome.confidenceSentence).toContain(CONFIDENCE_SENTENCE);
+    expect(CONFIDENCE_SENTENCE).toMatch(/recording conditions, not accuracy/);
+    expect(CONFIDENCE_SENTENCE).toMatch(/capped until validated on real video/);
+  });
+
+  it("ordinary reps carry no flags", () => {
+    if (outcome.kind !== "analysed") throw new Error("expected analysed");
+    for (const row of outcome.reps) expect(row.notes).toEqual([]);
+  });
+
+  it("in orbit with a 1000 N device force the work is the device force times the height: 1000 × 0.5 × 3 = 1500 J", () => {
+    const iss = analyseRecording(syntheticSession(lift), { ...earth, gEnvMs2: 0, deviceForceN: 1000 }, label);
+    if (iss.kind !== "analysed") throw new Error("expected analysed");
+    expect(iss.session.energy.value as number).toBeGreaterThan(1500 * 0.97);
+    expect(iss.session.energy.value as number).toBeLessThan(1500 * 1.03);
+  });
+});
+
+describe("a fast lift", () => {
+  // A 0.4 s lift of 0.5 m: liftDurationS reads about 0.85 × 0.4 = 0.34 s, under the 0.65 s limit.
+  it("carries the note that it is too fast for the filter and that work and peak force are under-read", () => {
+    const fast = analyseRecording(syntheticSession({ ...lift, upS: 0.4, downS: 0.4 }), earth, label);
+    if (fast.kind !== "analysed") throw new Error("expected analysed");
+    expect(fast.reps.length).toBeGreaterThan(0);
+    for (const row of fast.reps) {
+      expect(row.rep.filterLimited).toBe(true);
+      expect(row.notes.join(" ")).toMatch(/too fast for the filter/i);
+      expect(row.notes.join(" ")).toMatch(/under-read/i);
+    }
+    expect(fast.session.details.some((d) => /too fast/i.test(d.label))).toBe(true);
+  });
+});
+
+describe("repNotes", () => {
+  const rep: RepResult = {
+    startS: 1,
+    durationS: 2,
+    liftDurationS: 0.85,
+    filterLimited: false,
+    rangeOfMotionM: 0.5,
+    pathLengthM: 1,
+    trimmedRangeFraction: 1,
+    positiveWorkJ: 49,
+    negativeWorkJ: -49,
+    peakForceN: 127,
+    impulseNs: 0,
+  };
+
+  it("no flags for a rep that is neither fast nor trimmed", () => {
+    expect(repNotes(rep)).toEqual([]);
+    expect(repNotes({ ...rep, trimmedRangeFraction: 0.9 })).toEqual([]);
+  });
+
+  it("a rep measured over half the detected movement says so, as a percentage", () => {
+    const notes = repNotes({ ...rep, trimmedRangeFraction: 0.5 });
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toBe("Measured over 50 % of the detected movement.");
+  });
+
+  it("the threshold is under 0.9 and the percentage is rounded", () => {
+    expect(repNotes({ ...rep, trimmedRangeFraction: 0.899 })[0]).toBe("Measured over 90 % of the detected movement.");
+    expect(repNotes({ ...rep, trimmedRangeFraction: 0.451 })[0]).toBe("Measured over 45 % of the detected movement.");
+  });
+
+  it("a filter-limited rep and a trimmed rep carry both notes", () => {
+    const notes = repNotes({ ...rep, filterLimited: true, trimmedRangeFraction: 0.45 });
+    expect(notes).toHaveLength(2);
+    expect(notes[0]).toBe("Too fast for the filter; work and peak force are under-read.");
+  });
+});
+
+describe("a recording that is refused", () => {
+  it("gives a sentence per reason and no numbers", () => {
+    const lost: PoseFrame[] = syntheticSession(lift).map((f) => ({ ...f, visibility: 0 }));
+    const outcome = analyseRecording(lost, earth, label);
+    expect(outcome.kind).toBe("refused");
+    if (outcome.kind !== "refused") return;
+    expect(outcome.reasons.length).toBeGreaterThan(0);
+    for (const r of outcome.reasons) {
+      expect(r.sentence.trim().length).toBeGreaterThan(20);
+      expect(r.sentence).not.toMatch(/[A-Z]+_[A-Z]+/); // no raw reason code in the sentence
+    }
+    expect(outcome.reasons.map((r) => r.code)).toContain("LANDMARK_LOST");
+    expect(JSON.stringify(outcome)).not.toMatch(/positiveWork|peakForce|"session"/);
+    expect("session" in outcome).toBe(false);
+  });
+
+  it("no scale is its own reason", () => {
+    const outcome = analyseRecording(syntheticSession(lift), { ...earth, metersPerUnit: null }, label);
+    expect(outcome.kind).toBe("refused");
+    if (outcome.kind !== "refused") return;
+    expect(outcome.reasons.map((r) => r.code)).toContain("NO_SCALE");
+  });
+
+  it("a stream that is too slow is refused for its frame rate", () => {
+    const slow = syntheticSession({ ...lift, rateHz: 10 });
+    const outcome = analyseRecording(slow, earth, label);
+    expect(outcome.kind).toBe("refused");
+    if (outcome.kind !== "refused") return;
+    expect(outcome.reasons.map((r) => r.code)).toContain("LOW_FRAME_RATE");
+  });
+
+  it("a recording with no movement has no rep: refused, with its own sentence", () => {
+    const still = syntheticSession({ ...lift, reps: 0, restS: 5 });
+    const outcome = analyseRecording(still, earth, label);
+    expect(outcome.kind).toBe("refused");
+    if (outcome.kind !== "refused") return;
+    expect(outcome.reasons.map((r) => r.code)).toEqual(["NO_REPS"]);
+    expect(outcome.reasons[0]?.sentence).toMatch(/10 cm/);
+  });
+
+  it("every reason has a sentence", () => {
+    const sentences = refusalSentences(["NO_SCALE", "LOW_FRAME_RATE", "LANDMARK_LOST", "GAP_TOO_LONG", "TOO_SHORT"]);
+    expect(sentences).toHaveLength(5);
+    expect(new Set(sentences).size).toBe(5);
+    for (const s of sentences) expect(s.trim().length).toBeGreaterThan(20);
+  });
+});

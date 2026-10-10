@@ -39,6 +39,14 @@ export function formatMultiple(multiple: number | null): string {
   return multiple === null ? DASH : `${number(multiple)}×`;
 }
 
+export function formatLength(metres: number | null): string {
+  return metres === null ? DASH : `${number(metres)} m`;
+}
+
+export function formatSeconds(seconds: number | null): string {
+  return seconds === null ? DASH : `${number(seconds)} s`;
+}
+
 /** A whole number with thousands grouped, for stimulus-days. */
 export function formatDays(value: number | null): string {
   if (value === null) return DASH;

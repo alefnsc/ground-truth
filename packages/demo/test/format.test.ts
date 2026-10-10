@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DASH, formatDays, formatEnergy, formatForce, formatMultiple, formatPercent, formatQuantity } from "../src/view/format";
+import { DASH, formatDays, formatLength, formatSeconds, formatEnergy, formatForce, formatMultiple, formatPercent, formatQuantity } from "../src/view/format";
 
 describe("formatEnergy", () => {
   it("null is a dash", () => {
@@ -90,5 +90,18 @@ describe("formatQuantity", () => {
   });
   it("never prints a negative zero", () => {
     expect(formatQuantity({ ...base, value: -0, unit: "m" })).toBe("0 m");
+  });
+});
+
+describe("formatLength and formatSeconds", () => {
+  it("null is a dash", () => {
+    expect(formatLength(null)).toBe(DASH);
+    expect(formatSeconds(null)).toBe(DASH);
+  });
+  it("metres and seconds with about three significant figures", () => {
+    expect(formatLength(0.4978)).toBe("0.50 m");
+    expect(formatLength(1.1)).toBe("1.10 m");
+    expect(formatSeconds(0.85)).toBe("0.85 s");
+    expect(formatSeconds(12.34)).toBe("12.3 s");
   });
 });
