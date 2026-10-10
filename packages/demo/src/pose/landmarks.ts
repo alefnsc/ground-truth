@@ -76,3 +76,50 @@ export function normalizedY(clientY: number, top: number, height: number): numbe
   if (!(height > 0)) return 0;
   return Math.min(1, Math.max(0, (clientY - top) / height));
 }
+
+// ---------------------------------------------------------------------------
+// The side is chosen over the RECORDED frames, once, when the recording ends
+// ---------------------------------------------------------------------------
+
+/** Both wrists of one recorded frame, each already in the capture package's shape. */
+export interface WristSample {
+  tS: number;
+  LEFT: PoseFrame;
+  RIGHT: PoseFrame;
+}
+
+export function wristSample(tS: number, landmarks: readonly Landmark[] | undefined): WristSample {
+  return { tS, LEFT: toPoseFrame(tS, landmarks, "LEFT"), RIGHT: toPoseFrame(tS, landmarks, "RIGHT") };
+}
+
+/** The wrist with the higher mean visibility over the recorded frames; LEFT on a tie or with nothing recorded. */
+export function pickRecordedSide(samples: readonly WristSample[]): Side {
+  let left = 0;
+  let right = 0;
+  for (const s of samples) {
+    left += s.LEFT.visibility;
+    right += s.RIGHT.visibility;
+  }
+  return right > left ? "RIGHT" : "LEFT";
+}
+
+/** The frames of one side, for the capture package. */
+export function framesOf(samples: readonly WristSample[], side: Side): PoseFrame[] {
+  return samples.map((s) => s[side]);
+}
+
+/**
+ * Eye and ankle heights for the stature method from ONE pose (the frozen frame's): the side whose eye and ankle are
+ * more visible, falling to the other side when that one is not usable. Null when neither side has both.
+ */
+export function calibrationOfBestSide(landmarks: readonly Landmark[] | undefined): { side: Side; eyeY: number; ankleY: number } | null {
+  if (!landmarks) return null;
+  const score = (side: Side): number =>
+    visibilityOf(landmarks[side === "LEFT" ? LANDMARK.LEFT_EYE : LANDMARK.RIGHT_EYE]) + visibilityOf(landmarks[side === "LEFT" ? LANDMARK.LEFT_ANKLE : LANDMARK.RIGHT_ANKLE]);
+  const order: Side[] = score("RIGHT") > score("LEFT") ? ["RIGHT", "LEFT"] : ["LEFT", "RIGHT"];
+  for (const side of order) {
+    const c = calibrationFromLandmarks(landmarks, side);
+    if (c) return { side, ...c };
+  }
+  return null;
+}

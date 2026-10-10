@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LANDMARK, calibrationFromLandmarks, normalizedY, pickSide, toPoseFrame, wristOf, type Landmark } from "../src/pose/landmarks";
+import { LANDMARK, calibrationFromLandmarks, calibrationOfBestSide, framesOf, pickRecordedSide, wristSample, normalizedY, pickSide, toPoseFrame, wristOf, type Landmark } from "../src/pose/landmarks";
 
 /** A full 33-landmark pose, all at (0.5, 0.5) and fully visible, with overrides by index. */
 function pose(overrides: Record<number, Partial<Landmark>> = {}): Landmark[] {
@@ -121,5 +121,54 @@ describe("normalizedY", () => {
   });
   it("an element with no height gives 0, not NaN", () => {
     expect(normalizedY(10, 0, 0)).toBe(0);
+  });
+});
+
+describe("the side is chosen over the recorded frames", () => {
+  // Preview might have seen the left wrist; the recording has the right one visible. The recorded frames decide.
+  const frame = (tS: number, left: Partial<Landmark>, right: Partial<Landmark>) => wristSample(tS, pose({ 15: left, 16: right }));
+
+  it("wristSample keeps both wrists of one frame, each as the capture package wants it", () => {
+    const s = wristSample(0.5, pose({ 15: { y: 0.3, visibility: 0.9 }, 16: { y: 0.6, visibility: 0.2 } }));
+    expect(s).toEqual({ tS: 0.5, LEFT: { tS: 0.5, wristY: 0.3, visibility: 0.9 }, RIGHT: { tS: 0.5, wristY: 0.6, visibility: 0.2 } });
+    expect(wristSample(1, undefined)).toEqual({ tS: 1, LEFT: { tS: 1, wristY: 0, visibility: 0 }, RIGHT: { tS: 1, wristY: 0, visibility: 0 } });
+  });
+
+  it("chooses the wrist with the higher mean visibility over the whole recording", () => {
+    const samples = [
+      frame(0, { visibility: 0.9 }, { visibility: 0.1 }), // a stray frame where the left was seen
+      frame(1, { visibility: 0.1 }, { visibility: 0.95 }),
+      frame(2, { visibility: 0.1 }, { visibility: 0.95 }),
+      frame(3, { visibility: 0.1 }, { visibility: 0.95 }),
+    ];
+    expect(pickRecordedSide(samples)).toBe("RIGHT");
+  });
+
+  it("the frames analysed are that side's, constant for the whole recording", () => {
+    const samples = [
+      frame(0, { y: 0.1, visibility: 0.2 }, { y: 0.7, visibility: 0.9 }),
+      frame(1, { y: 0.2, visibility: 0.9 }, { y: 0.6, visibility: 0.9 }),
+    ];
+    const side = pickRecordedSide(samples);
+    expect(side).toBe("RIGHT"); // right mean 0.9, left mean 0.55
+    expect(framesOf(samples, side).map((f) => f.wristY)).toEqual([0.7, 0.6]);
+  });
+
+  it("a tie, or nothing recorded, is LEFT", () => {
+    expect(pickRecordedSide([])).toBe("LEFT");
+    expect(pickRecordedSide([frame(0, { visibility: 0.5 }, { visibility: 0.5 })])).toBe("LEFT");
+  });
+});
+
+describe("calibrationOfBestSide", () => {
+  it("reads eye and ankle of the side whose eye and ankle are more visible, and says which", () => {
+    const l = pose({ 2: { y: 0.1, visibility: 0.3 }, 27: { y: 0.9, visibility: 0.3 }, 5: { y: 0.12, visibility: 0.9 }, 28: { y: 0.94, visibility: 0.9 } });
+    expect(calibrationOfBestSide(l)).toEqual({ side: "RIGHT", eyeY: 0.12, ankleY: 0.94 });
+  });
+  it("falls to the other side when the better one is not usable, and to null when neither is", () => {
+    const l = pose({ 2: { y: 0.1, visibility: 0.9 }, 27: { y: 0.9, visibility: 0.9 }, 5: { visibility: 0.8 }, 28: { visibility: 0.2 } });
+    expect(calibrationOfBestSide(l)?.side).toBe("LEFT");
+    expect(calibrationOfBestSide(pose({ 27: { visibility: 0.1 }, 28: { visibility: 0.1 } }))).toBeNull();
+    expect(calibrationOfBestSide(undefined)).toBeNull();
   });
 });

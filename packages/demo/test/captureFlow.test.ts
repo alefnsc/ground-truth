@@ -6,9 +6,11 @@ import {
   SCALE_SENTENCE,
   analyseRecording,
   captureInputProblem,
+  knownLengthReady,
   refusalSentences,
   repNotes,
   scaleFrom,
+  statureReady,
   transition,
   type CaptureInputs,
   type FlowEvent,
@@ -268,5 +270,29 @@ describe("a recording that is refused", () => {
     expect(sentences).toHaveLength(5);
     expect(new Set(sentences).size).toBe(5);
     for (const s of sentences) expect(s.trim().length).toBeGreaterThan(20);
+  });
+});
+
+describe("when a scale can be taken", () => {
+  const ok = { frozen: true, endA: true, endB: true, lengthM: 0.3 };
+
+  it("known length needs a frozen frame, both ends set after the freeze, and a positive length", () => {
+    expect(knownLengthReady(ok)).toBe(true);
+    expect(knownLengthReady({ ...ok, frozen: false })).toBe(false);
+    expect(knownLengthReady({ ...ok, endA: false })).toBe(false);
+    expect(knownLengthReady({ ...ok, endB: false })).toBe(false);
+    expect(knownLengthReady({ ...ok, lengthM: 0 })).toBe(false);
+    expect(knownLengthReady({ ...ok, lengthM: Number.NaN })).toBe(false);
+  });
+
+  it("known length: a typed length alone, with nothing frozen and no taps, is not a scale", () => {
+    expect(knownLengthReady({ frozen: false, endA: false, endB: false, lengthM: 0.3 })).toBe(false);
+  });
+
+  it("stature needs a frozen frame, a pose read from that frame, and a positive height", () => {
+    expect(statureReady({ frozen: true, poseRead: true, statureM: 1.75 })).toBe(true);
+    expect(statureReady({ frozen: false, poseRead: true, statureM: 1.75 })).toBe(false);
+    expect(statureReady({ frozen: true, poseRead: false, statureM: 1.75 })).toBe(false);
+    expect(statureReady({ frozen: true, poseRead: true, statureM: -1 })).toBe(false);
   });
 });

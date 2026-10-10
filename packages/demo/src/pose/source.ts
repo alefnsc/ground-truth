@@ -137,6 +137,15 @@ let clockOffsetMs = 0;
 const RUN_GAP_MS = 1000;
 
 /**
+ * One detection on the frame the video shows now, for freezing a frame. Stop any tracker first: the pose model's clock
+ * only moves forward, and this moves it past every earlier run, so a tracker started afterwards begins later still.
+ */
+export function detectOnce(video: HTMLVideoElement, landmarker: PoseLandmarker): Landmark[] | undefined {
+  clockOffsetMs += RUN_GAP_MS;
+  return landmarker.detectForVideo(video, clockOffsetMs).landmarks[0];
+}
+
+/**
  * Delivers one sample per new video frame. A `mediaTime` is never processed twice and never out of order (a seek
  * backwards, a loop or a repeated callback is skipped), so every sample's `tS` is strictly increasing.
  */

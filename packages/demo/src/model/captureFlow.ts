@@ -124,6 +124,19 @@ export function scaleFrom(method: ScaleMethod): ScaleOutcome {
   }
 }
 
+/**
+ * A known length gives a scale only from a frozen frame whose two ends were both set AFTER the freeze, with a
+ * length above 0. Anything less would turn a slider's resting position into a scale.
+ */
+export function knownLengthReady(s: { frozen: boolean; endA: boolean; endB: boolean; lengthM: number }): boolean {
+  return s.frozen && s.endA && s.endB && Number.isFinite(s.lengthM) && s.lengthM > 0;
+}
+
+/** The stature method needs a frozen frame, a pose read from that frame, and a height above 0. */
+export function statureReady(s: { frozen: boolean; poseRead: boolean; statureM: number }): boolean {
+  return s.frozen && s.poseRead && Number.isFinite(s.statureM) && s.statureM > 0;
+}
+
 // ---------------------------------------------------------------------------
 // Inputs and analysis
 // ---------------------------------------------------------------------------

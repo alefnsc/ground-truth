@@ -5,13 +5,14 @@
  */
 
 import type { PoseLandmarker } from "@mediapipe/tasks-vision";
-import type { PoseFrame } from "@ground-truth/capture";
 import { ENVS, type Quantity, type SessionResult } from "../model/scenarios";
 import {
   CONFIDENCE_SENTENCE,
   SCALE_SENTENCE,
   analyseRecording,
   captureInputProblem,
+  knownLengthReady,
+  statureReady,
   refusalSentences,
   scaleFrom,
   transition,
@@ -20,8 +21,8 @@ import {
   type FlowState,
   type ScaleMethod,
 } from "../model/captureFlow";
-import { calibrationFromLandmarks, normalizedY, pickSide, toPoseFrame, wristOf, type Landmark, type Side } from "../pose/landmarks";
-import { loadLandmarker, openCamera, openFile, track, type FrameSample, type Tracker, type VideoSource } from "../pose/source";
+import { calibrationOfBestSide, framesOf, normalizedY, pickRecordedSide, pickSide, wristOf, wristSample, type Landmark, type Side, type WristSample } from "../pose/landmarks";
+import { detectOnce, loadLandmarker, openCamera, openFile, track, type FrameSample, type Tracker, type VideoSource } from "../pose/source";
 import { h, replace, svg, tagChip } from "./dom";
 import { formatEnergy, formatForce, formatLength, formatQuantity, formatSeconds } from "./format";
 
@@ -53,8 +54,11 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
     frozen: false,
     frozenLandmarks: undefined as Landmark[] | undefined,
     scale: null as { metersPerUnit: number; quantity: Quantity } | null,
-    frames: [] as PoseFrame[],
-    side: "LEFT" as Side,
+    samples: [] as WristSample[],
+    endA: false,
+    endB: false,
+    stature: null as { eyeY: number; ankleY: number } | null,
+    side: "LEFT" as Side, // only for drawing the preview dot; the side that is analysed is chosen over the recorded frames
     counter: 0,
     outcome: null as CaptureOutcome | null,
     added: false,
@@ -125,6 +129,8 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
   const statureInput = h("input", { id: "cap-stature", type: "number", inputmode: "decimal", min: 1, max: 2.5, step: 0.01 });
   const useLengthButton = h("button", { type: "button" }, "Use this length as the scale");
   const useStatureButton = h("button", { type: "button" }, "Read my eye and ankle from the frozen frame");
+  const lengthHint = h("p", { class: "field-error", hidden: true }, "Tap the two ends on the frozen frame, or move both sliders.");
+  const statureHint = h("p", { class: "field-error", hidden: true }, "Your eye and ankle are not both visible in the frozen frame. Step back so that your whole body is in the frame, stand side-on, and freeze again.");
   const scaleResult = h("div", { class: "scale-result", "aria-live": "polite" });
 
   const methodLength = h("input", { type: "radio", name: "cap-method", id: "cap-method-length", value: "length", checked: true });
@@ -137,6 +143,8 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
     h("div", { class: "field" }, h("label", { for: "cap-a" }, "Top end, from the top of the frame"), sliderA),
     h("div", { class: "field" }, h("label", { for: "cap-b" }, "Bottom end, from the top of the frame"), sliderB),
     h("div", { class: "field" }, h("label", { for: "cap-length" }, "Length of the object", h("span", { class: "unit" }, " (m)")), lengthInput),
+    h("p", { class: "note" }, "The button is enabled once a frame is frozen, both ends are set and the length is typed."),
+    lengthHint,
     useLengthButton,
   );
   const staturePanel = h(
@@ -144,6 +152,7 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
     { class: "method-panel", hidden: true },
     h("p", { class: "explain" }, "Stand upright and side-on, with your whole body in the frame, freeze the frame, and type your height. Less accurate than a known length: it scales the middle of your body, not your wrist."),
     h("div", { class: "field" }, h("label", { for: "cap-stature" }, "Your height", h("span", { class: "unit" }, " (m)")), statureInput),
+    statureHint,
     useStatureButton,
   );
 
@@ -241,6 +250,8 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
 
   function startPreview(): void {
     stopTracking();
+    s.last = undefined;
+    s.recent = [];
     if (!s.source || !s.landmarker) return;
     s.tracker = track(video, s.landmarker, onPreviewSample, onTrackError);
     timingWarning.hidden = s.tracker.timing === "frame";
@@ -300,15 +311,42 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
     if (on) wristGroup.setAttribute("visibility", "hidden");
   }
 
+  /** Drops the scale and what it was taken from: a new frozen frame, an unfreeze, or a changed picture size makes it stale. */
+  function invalidateScale(): void {
+    s.scale = null;
+    s.endA = false;
+    s.endB = false;
+    s.stature = null;
+    replace(scaleResult);
+    if (s.flow === "ready") go("recalibrate");
+    else render();
+  }
+
   freezeButton.addEventListener("click", () => {
-    if (!s.source) return;
+    if (!s.source || !s.landmarker) return;
+    invalidateScale();
     frozenCanvas.width = video.videoWidth;
     frozenCanvas.height = video.videoHeight;
     frozenCanvas.getContext("2d")?.drawImage(video, 0, 0);
-    s.frozenLandmarks = s.last;
+    // One detection on this very frame, for the stature method: the last preview pose may be from another moment.
+    stopTracking();
+    try {
+      s.frozenLandmarks = detectOnce(video, s.landmarker);
+    } catch (error) {
+      s.frozenLandmarks = undefined;
+      say(`The pose model could not read this frame: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    const best = calibrationOfBestSide(s.frozenLandmarks);
+    s.stature = best ? { eyeY: best.eyeY, ankleY: best.ankleY } : null;
+    if (best) s.side = best.side;
     setFrozen(true);
+    startPreview();
+    render();
   });
-  unfreezeButton.addEventListener("click", () => setFrozen(false));
+  unfreezeButton.addEventListener("click", () => {
+    setFrozen(false);
+    invalidateScale();
+  });
 
   function syncMarkers(): void {
     markerA.setAttribute("y1", sliderA.value);
@@ -316,8 +354,16 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
     markerB.setAttribute("y1", sliderB.value);
     markerB.setAttribute("y2", sliderB.value);
   }
-  sliderA.addEventListener("input", syncMarkers);
-  sliderB.addEventListener("input", syncMarkers);
+  sliderA.addEventListener("input", () => {
+    s.endA = true;
+    syncMarkers();
+    render();
+  });
+  sliderB.addEventListener("input", () => {
+    s.endB = true;
+    syncMarkers();
+    render();
+  });
 
   // Tapping the frozen frame sets the nearer-unset end: first tap the top end, next the bottom end, then again.
   let nextEnd: "a" | "b" = "a";
@@ -326,8 +372,11 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
     const y = String(normalizedY(event.clientY, rect.top, rect.height));
     const slider = nextEnd === "a" ? sliderA : sliderB;
     slider.value = y;
+    if (nextEnd === "a") s.endA = true;
+    else s.endB = true;
     nextEnd = nextEnd === "a" ? "b" : "a";
     syncMarkers();
+    render();
   });
 
   function selectMethod(): void {
@@ -357,22 +406,20 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
     render();
   }
 
-  useLengthButton.addEventListener("click", () =>
-    applyScale({ kind: "known-length", lengthM: lengthInput.valueAsNumber, yA: sliderA.valueAsNumber, yB: sliderB.valueAsNumber }),
-  );
+  useLengthButton.addEventListener("click", () => {
+    if (!knownLengthReady({ frozen: s.frozen, endA: s.endA, endB: s.endB, lengthM: lengthInput.valueAsNumber })) return;
+    applyScale({ kind: "known-length", lengthM: lengthInput.valueAsNumber, yA: sliderA.valueAsNumber, yB: sliderB.valueAsNumber });
+  });
   useStatureButton.addEventListener("click", () => {
-    const calibration = s.frozen && s.frozenLandmarks ? calibrationFromLandmarks(s.frozenLandmarks, s.side) : null;
-    if (!calibration) {
-      s.scale = null;
-      if (s.flow === "ready") go("recalibrate");
-      replace(
-        scaleResult,
-        h("p", { class: "field-error" }, s.frozen ? "Your eye and ankle are not both visible in the frozen frame. Step back so that your whole body is in the frame, stand side-on, and freeze again." : "Freeze a frame with your whole body in it first."),
-      );
-      render();
-      return;
-    }
-    applyScale({ kind: "stature", statureM: statureInput.valueAsNumber, eyeY: calibration.eyeY, ankleY: calibration.ankleY });
+    if (!s.stature || !statureReady({ frozen: s.frozen, poseRead: true, statureM: statureInput.valueAsNumber })) return;
+    applyScale({ kind: "stature", statureM: statureInput.valueAsNumber, eyeY: s.stature.eyeY, ankleY: s.stature.ankleY });
+  });
+  for (const input of [lengthInput, statureInput]) input.addEventListener("input", render);
+
+  // A phone rotating, or a different video, changes the picture's size: a scale taken at the old size is wrong.
+  video.addEventListener("resize", () => {
+    if (s.frozen) setFrozen(false);
+    if (s.scale || s.endA || s.endB) invalidateScale();
   });
 
   // ---- behaviour: record -----------------------------------------------------------------------
@@ -395,7 +442,7 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
   recordButton.addEventListener("click", () => {
     if (s.flow !== "ready" || !s.source || !s.landmarker || s.scale === null || currentProblem()) return;
     stopTracking();
-    s.frames = [];
+    s.samples = [];
     s.outcome = null;
     s.added = false;
     setFrozen(false);
@@ -411,9 +458,9 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
       video,
       s.landmarker,
       (sample) => {
-        s.frames.push(toPoseFrame(sample.tS, sample.landmarks, s.side));
+        s.samples.push(wristSample(sample.tS, sample.landmarks));
         drawWrist(sample.landmarks);
-        if (s.frames.length % 15 === 0) say(`Recording… ${s.frames.length} frames`);
+        if (s.samples.length % 15 === 0) say(`Recording… ${s.samples.length} frames`);
       },
       onTrackError,
     );
@@ -424,13 +471,14 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
     stopTracking();
     video.pause();
     const label = { id: `camera-${s.counter + 1}`, title: `Camera set ${s.counter + 1}` };
-    const outcome = analyseRecording(s.frames, inputs(), label);
+    // The side is chosen once, over the frames that were recorded, and stays the same for the whole recording.
+    const outcome = analyseRecording(framesOf(s.samples, pickRecordedSide(s.samples)), inputs(), label);
     s.outcome = outcome;
     if (outcome.kind === "analysed") s.counter += 1;
     // The camera is released as soon as recording stops: the tracks are stopped, and nothing was stored.
     closeSource();
     stage.hidden = true;
-    say(`Recording stopped. ${s.frames.length} frames analysed on this page; no frame or video was uploaded or saved.`);
+    say(`Recording stopped. ${s.samples.length} frames analysed on this page; no frame or video was uploaded or saved.`);
     go(outcome.kind === "analysed" ? "analysed" : "refused");
   }
   stopButton.addEventListener("click", finishRecording);
@@ -504,6 +552,10 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
     stopButton.hidden = s.flow !== "recording";
     recordButton.hidden = s.flow === "recording";
     const problem = currentProblem();
+    useLengthButton.disabled = !knownLengthReady({ frozen: s.frozen, endA: s.endA, endB: s.endB, lengthM: lengthInput.valueAsNumber });
+    useStatureButton.disabled = !(s.stature !== null && statureReady({ frozen: s.frozen, poseRead: true, statureM: statureInput.valueAsNumber }));
+    lengthHint.hidden = !s.frozen || (s.endA && s.endB);
+    statureHint.hidden = !s.frozen || s.stature !== null;
     recordButton.disabled = !(s.flow === "ready" && s.scale !== null && problem === null);
     const reason = s.flow === "recording" ? null : s.scale === null ? "Set the scale first." : problem;
     loadProblem.hidden = reason === null;
