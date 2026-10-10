@@ -62,24 +62,34 @@ function prepare(video: HTMLVideoElement): void {
   video.setAttribute("playsinline", "");
 }
 
-/** The rear camera if there is one. Needs a secure page (HTTPS or localhost). */
-export async function openCamera(video: HTMLVideoElement): Promise<VideoSource> {
+/**
+ * The rear camera if there is one. Needs a secure page (HTTPS or localhost). `onEnded` is called if the camera stops
+ * by itself (unplugged, permission revoked, taken by another app). If anything fails after the camera was granted,
+ * its tracks are stopped before the error is thrown.
+ */
+export async function openCamera(video: HTMLVideoElement, onEnded: () => void): Promise<VideoSource> {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error("This page cannot reach a camera. Phones only allow it on HTTPS (use npm run dev:https) or on localhost.");
   }
   const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
-  prepare(video);
-  video.removeAttribute("src");
-  video.srcObject = stream;
-  await video.play();
-  return {
-    kind: "camera",
-    release() {
-      for (const track of stream.getTracks()) track.stop();
+  const stop = (): void => {
+    for (const track of stream.getTracks()) track.stop();
+    if (video.srcObject === stream) {
       video.pause();
       video.srcObject = null;
-    },
+    }
   };
+  try {
+    prepare(video);
+    video.removeAttribute("src");
+    video.srcObject = stream;
+    for (const track of stream.getVideoTracks()) track.addEventListener("ended", onEnded);
+    await video.play();
+  } catch (error) {
+    stop();
+    throw error;
+  }
+  return { kind: "camera", release: stop };
 }
 
 /** A video file chosen by the user. It is played from an object URL: it is never uploaded or stored. */
@@ -102,12 +112,31 @@ export async function openFile(video: HTMLVideoElement, file: File): Promise<Vid
   return {
     kind: "file",
     release() {
-      video.pause();
-      video.removeAttribute("src");
-      video.load();
+      if (video.src === url) {
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+      }
       URL.revokeObjectURL(url);
     },
   };
+}
+
+/** Waits for a seek to the start of the video to finish, so that no frame from the old position is processed as the first. */
+export function seekToStart(video: HTMLVideoElement): Promise<void> {
+  if (video.currentTime === 0 && !video.seeking) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, 3000);
+    video.addEventListener(
+      "seeked",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+    video.currentTime = 0;
+  });
 }
 
 // ---------------------------------------------------------------------------

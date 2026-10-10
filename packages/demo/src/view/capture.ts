@@ -10,7 +10,10 @@ import {
   CONFIDENCE_SENTENCE,
   SCALE_SENTENCE,
   analyseRecording,
+  RECORDING_FAILED,
   captureInputProblem,
+  createGate,
+  timingProblem,
   knownLengthReady,
   statureReady,
   refusalSentences,
@@ -22,7 +25,7 @@ import {
   type ScaleMethod,
 } from "../model/captureFlow";
 import { calibrationOfBestSide, framesOf, normalizedY, pickRecordedSide, pickSide, wristOf, wristSample, type Landmark, type Side, type WristSample } from "../pose/landmarks";
-import { detectOnce, loadLandmarker, openCamera, openFile, track, type FrameSample, type Tracker, type VideoSource } from "../pose/source";
+import { detectOnce, loadLandmarker, openCamera, openFile, seekToStart, track, type FrameSample, type Tracker, type VideoSource } from "../pose/source";
 import { h, replace, svg, tagChip } from "./dom";
 import { formatEnergy, formatForce, formatLength, formatQuantity, formatSeconds } from "./format";
 
@@ -61,8 +64,11 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
     side: "LEFT" as Side, // only for drawing the preview dot; the side that is analysed is chosen over the recorded frames
     counter: 0,
     outcome: null as CaptureOutcome | null,
+    failure: null as string | null,
     added: false,
   };
+  const gate = createGate();
+  const isRecording = (): boolean => s.flow === "recording";
 
   const go = (event: FlowEvent): void => {
     s.flow = transition(s.flow, event);
@@ -89,7 +95,7 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
   // ---- 2. source and preview -------------------------------------------------------------------
 
   const status = h("p", { class: "status", role: "status", "aria-live": "polite" });
-  const timingWarning = h("p", { class: "field-error", hidden: true }, "This browser does not report the time of each video frame, so the timestamps carry scheduling jitter that the analysis cannot tell from movement. Results will be less reliable.");
+  const timingWarning = h("p", { class: "field-error", hidden: true });
   const video = h("video", { class: "stage-video", playsinline: true, muted: true });
   const frozenCanvas = h("canvas", { class: "stage-frozen", hidden: true });
   const wristMark = svg("path", { d: "M-0.03 0H0.03M0 -0.03V0.03", class: "wrist-mark", "vector-effect": "non-scaling-stroke" });
@@ -254,27 +260,51 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
     s.recent = [];
     if (!s.source || !s.landmarker) return;
     s.tracker = track(video, s.landmarker, onPreviewSample, onTrackError);
-    timingWarning.hidden = s.tracker.timing === "frame";
+  }
+
+  /** Recording is refused, with a sentence, in a browser that cannot give each frame's capture time. */
+  const timingBlock = (): string | null => timingProblem(typeof video.requestVideoFrameCallback === "function");
+
+  function onCameraEnded(): void {
+    if (s.flow === "recording") {
+      finishRecording();
+    } else if (s.source) {
+      closeSource();
+      stage.hidden = true;
+      say("The camera stopped.");
+      go("reset");
+    }
   }
 
   async function open(kind: "camera" | "file", file?: File): Promise<void> {
+    const token = gate.next();
     closeSource();
     if (s.flow !== "idle") go("reset");
     s.outcome = null;
+    s.failure = null;
     s.scale = null;
     s.added = false;
     say(kind === "camera" ? "Opening the camera…" : "Opening the video…");
     try {
-      const opened = kind === "camera" ? await openCamera(video) : await openFile(video, file as File);
+      const opened = kind === "camera" ? await openCamera(video, onCameraEnded) : await openFile(video, file as File);
+      // Superseded while the camera or file was being granted: nobody owns this source, so release it.
+      if (!gate.isCurrent(token)) {
+        opened.release();
+        return;
+      }
       s.source = opened;
       stage.hidden = false;
       say("Loading the pose model (a one-off download of a few megabytes)…");
-      s.landmarker = await loadLandmarker();
+      const landmarker = await loadLandmarker();
+      // Superseded or left while the model loaded: whoever superseded it has already released the source.
+      if (!gate.isCurrent(token)) return;
+      s.landmarker = landmarker;
       go("openSource");
       say("Ready. Freeze a frame to set the scale, then record.");
       startPreview();
       if (opened.kind === "file") video.controls = true;
     } catch (error) {
+      if (!gate.isCurrent(token)) return;
       closeSource();
       stage.hidden = true;
       say(error instanceof Error ? error.message : String(error));
@@ -439,24 +469,36 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
     return captureInputProblem(inputs());
   }
 
-  recordButton.addEventListener("click", () => {
-    if (s.flow !== "ready" || !s.source || !s.landmarker || s.scale === null || currentProblem()) return;
+  recordButton.addEventListener("click", () => void startRecording());
+
+  async function startRecording(): Promise<void> {
+    if (s.flow !== "ready" || !s.source || !s.landmarker || s.scale === null || currentProblem() || timingBlock()) return;
+    const landmarker = s.landmarker;
+    const isFile = s.source.kind === "file";
     stopTracking();
     s.samples = [];
     s.outcome = null;
+    s.failure = null;
     s.added = false;
     setFrozen(false);
     go("start");
     say("Recording…");
-    if (s.source.kind === "file") {
+    if (isFile) {
       video.controls = false;
-      video.currentTime = 0;
       video.playbackRate = FILE_PLAYBACK_RATE;
-      void video.play();
+      await seekToStart(video); // no frame from the old position may be processed as the first
+      try {
+        await video.play();
+      } catch (error) {
+        say(`The video could not be played: ${error instanceof Error ? error.message : String(error)}`);
+        finishRecording();
+        return;
+      }
+      if (!isRecording()) return; // stopped while the video was seeking
     }
     s.tracker = track(
       video,
-      s.landmarker,
+      landmarker,
       (sample) => {
         s.samples.push(wristSample(sample.tS, sample.landmarks));
         drawWrist(sample.landmarks);
@@ -464,22 +506,32 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
       },
       onTrackError,
     );
-  });
+  }
 
   function finishRecording(): void {
     if (s.flow !== "recording") return;
     stopTracking();
     video.pause();
-    const label = { id: `camera-${s.counter + 1}`, title: `Camera set ${s.counter + 1}` };
-    // The side is chosen once, over the frames that were recorded, and stays the same for the whole recording.
-    const outcome = analyseRecording(framesOf(s.samples, pickRecordedSide(s.samples)), inputs(), label);
-    s.outcome = outcome;
-    if (outcome.kind === "analysed") s.counter += 1;
-    // The camera is released as soon as recording stops: the tracks are stopped, and nothing was stored.
-    closeSource();
-    stage.hidden = true;
-    say(`Recording stopped. ${s.samples.length} frames analysed on this page; no frame or video was uploaded or saved.`);
-    go(outcome.kind === "analysed" ? "analysed" : "refused");
+    let event: FlowEvent = "failed";
+    try {
+      const label = { id: `camera-${s.counter + 1}`, title: `Camera set ${s.counter + 1}` };
+      // The side is chosen once, over the frames that were recorded, and stays the same for the whole recording.
+      const outcome = analyseRecording(framesOf(s.samples, pickRecordedSide(s.samples)), inputs(), label);
+      s.outcome = outcome;
+      s.failure = null;
+      if (outcome.kind === "analysed") s.counter += 1;
+      event = outcome.kind === "analysed" ? "analysed" : "refused";
+      say(`Recording stopped. ${s.samples.length} frames analysed on this page; no frame or video was uploaded or saved.`);
+    } catch {
+      s.outcome = null;
+      s.failure = RECORDING_FAILED;
+      say(RECORDING_FAILED);
+    } finally {
+      // The camera is released whatever happened: the tracks are stopped, and nothing was stored.
+      closeSource();
+      stage.hidden = true;
+      go(event);
+    }
   }
   stopButton.addEventListener("click", finishRecording);
 
@@ -487,6 +539,10 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
 
   function renderResult(): void {
     const outcome = s.outcome;
+    if (s.flow === "failed") {
+      replace(resultBody, h("p", { role: "alert" }, s.failure ?? RECORDING_FAILED));
+      return;
+    }
     if (!outcome) {
       replace(resultBody);
       return;
@@ -556,13 +612,16 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
     useStatureButton.disabled = !(s.stature !== null && statureReady({ frozen: s.frozen, poseRead: true, statureM: statureInput.valueAsNumber }));
     lengthHint.hidden = !s.frozen || (s.endA && s.endB);
     statureHint.hidden = !s.frozen || s.stature !== null;
-    recordButton.disabled = !(s.flow === "ready" && s.scale !== null && problem === null);
+    const timing = s.source ? timingBlock() : null;
+    timingWarning.hidden = timing === null;
+    replace(timingWarning, timing ?? "");
+    recordButton.disabled = !(s.flow === "ready" && s.scale !== null && problem === null && timing === null);
     const reason = s.flow === "recording" ? null : s.scale === null ? "Set the scale first." : problem;
     loadProblem.hidden = reason === null;
     replace(loadProblem, reason ?? "");
     cameraButton.disabled = s.flow === "recording";
     fileInput.disabled = s.flow === "recording";
-    result.hidden = !(s.flow === "analysed" || s.flow === "refused");
+    result.hidden = !(s.flow === "analysed" || s.flow === "refused" || s.flow === "failed");
     renderResult();
   }
 
@@ -574,6 +633,8 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
 
   return {
     release(): void {
+      gate.invalidate(); // an open that is still pending must release what it acquires
+      if (!s.source && s.flow === "idle") say("");
       if (s.flow === "recording") {
         stopTracking();
         video.pause();

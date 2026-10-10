@@ -28,16 +28,17 @@ import { cameraPipelineTag, cameraSession, derive, labelled, source, type Detail
 // State machine: idle -> calibrating -> ready -> recording -> analysed | refused
 // ---------------------------------------------------------------------------
 
-export type FlowState = "idle" | "calibrating" | "ready" | "recording" | "analysed" | "refused";
-export type FlowEvent = "openSource" | "calibrated" | "recalibrate" | "start" | "analysed" | "refused" | "reset";
+export type FlowState = "idle" | "calibrating" | "ready" | "recording" | "analysed" | "refused" | "failed";
+export type FlowEvent = "openSource" | "calibrated" | "recalibrate" | "start" | "analysed" | "refused" | "failed" | "reset";
 
 const TRANSITIONS: Readonly<Record<FlowState, Partial<Record<FlowEvent, FlowState>>>> = {
   idle: { openSource: "calibrating" },
   calibrating: { calibrated: "ready" },
   ready: { start: "recording", recalibrate: "calibrating" },
-  recording: { analysed: "analysed", refused: "refused" },
+  recording: { analysed: "analysed", refused: "refused", failed: "failed" },
   analysed: { openSource: "calibrating" },
   refused: { openSource: "calibrating" },
+  failed: { openSource: "calibrating" },
 };
 
 /** The next state. `reset` goes to idle from anywhere; an event that does not apply leaves the state alone. */
@@ -45,6 +46,31 @@ export function transition(state: FlowState, event: FlowEvent): FlowState {
   if (event === "reset") return "idle";
   return TRANSITIONS[state][event] ?? state;
 }
+
+/**
+ * Which open is the current one. Every open takes a token and checks it after every await; an open that was
+ * superseded (a second click, leaving the tab) must release whatever it acquired and do nothing else.
+ */
+export function createGate(): { next(): number; invalidate(): void; isCurrent(token: number): boolean } {
+  let latest = 0;
+  return {
+    next: () => ++latest,
+    invalidate: () => {
+      latest += 1;
+    },
+    isCurrent: (token) => token === latest,
+  };
+}
+
+export const NO_CAPTURE_TIMESTAMPS =
+  "This browser cannot give capture timestamps for video frames (it has no requestVideoFrameCallback), so a recording would carry timing errors that look like movement. Use a current Chrome, Edge, Safari or Firefox.";
+
+/** A sentence when recording must be refused for lack of capture timestamps, else null. */
+export function timingProblem(hasFrameCallback: boolean): string | null {
+  return hasFrameCallback ? null : NO_CAPTURE_TIMESTAMPS;
+}
+
+export const RECORDING_FAILED = "The recording could not be analysed because of an error on this page. Nothing was saved. Record again.";
 
 // ---------------------------------------------------------------------------
 // Sentences

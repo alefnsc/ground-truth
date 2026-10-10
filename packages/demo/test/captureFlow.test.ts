@@ -6,6 +6,8 @@ import {
   SCALE_SENTENCE,
   analyseRecording,
   captureInputProblem,
+  createGate,
+  timingProblem,
   knownLengthReady,
   refusalSentences,
   repNotes,
@@ -40,13 +42,15 @@ describe("flow state machine", () => {
     ["recording", "refused", "refused"],
     ["analysed", "openSource", "calibrating"],
     ["refused", "openSource", "calibrating"],
+    ["recording", "failed", "failed"],
+    ["failed", "openSource", "calibrating"],
   ];
   it.each(path)("%s --%s--> %s", (from, event, to) => {
     expect(transition(from, event)).toBe(to);
   });
 
   it("reset returns to idle from anywhere", () => {
-    for (const s of ["idle", "calibrating", "ready", "recording", "analysed", "refused"] as const) {
+    for (const s of ["idle", "calibrating", "ready", "recording", "analysed", "refused", "failed"] as const) {
       expect(transition(s, "reset")).toBe("idle");
     }
   });
@@ -56,6 +60,8 @@ describe("flow state machine", () => {
     expect(transition("calibrating", "start")).toBe("calibrating");
     expect(transition("ready", "analysed")).toBe("ready");
     expect(transition("analysed", "start")).toBe("analysed");
+    expect(transition("ready", "failed")).toBe("ready"); // only a recording can fail
+    expect(transition("failed", "start")).toBe("failed");
   });
 
   it("walks idle to analysed", () => {
@@ -294,5 +300,37 @@ describe("when a scale can be taken", () => {
     expect(statureReady({ frozen: false, poseRead: true, statureM: 1.75 })).toBe(false);
     expect(statureReady({ frozen: true, poseRead: false, statureM: 1.75 })).toBe(false);
     expect(statureReady({ frozen: true, poseRead: true, statureM: -1 })).toBe(false);
+  });
+});
+
+describe("cancelling a pending open", () => {
+  it("only the latest open is current; an earlier one that resolves late must release what it acquired", () => {
+    const gate = createGate();
+    const first = gate.next();
+    expect(gate.isCurrent(first)).toBe(true);
+    const second = gate.next(); // a second quick click
+    expect(gate.isCurrent(first)).toBe(false);
+    expect(gate.isCurrent(second)).toBe(true);
+  });
+
+  it("invalidate (leaving the tab) supersedes the pending open without starting another", () => {
+    const gate = createGate();
+    const pending = gate.next();
+    gate.invalidate();
+    expect(gate.isCurrent(pending)).toBe(false);
+    expect(gate.isCurrent(gate.next())).toBe(true);
+  });
+
+  it("a token that was never issued is not current", () => {
+    expect(createGate().isCurrent(1)).toBe(false);
+  });
+});
+
+describe("timestamps", () => {
+  it("a browser that gives frame times may record; one that does not is refused with a sentence", () => {
+    expect(timingProblem(true)).toBeNull();
+    const sentence = timingProblem(false);
+    expect(sentence).toMatch(/capture timestamps/i);
+    expect(sentence?.length).toBeGreaterThan(30);
   });
 });
