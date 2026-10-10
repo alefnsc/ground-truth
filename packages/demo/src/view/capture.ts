@@ -118,7 +118,7 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
     h(
       "p",
       { class: "note" },
-      "Opening a source loads the pose model from cdn.jsdelivr.net and storage.googleapis.com. No frame or video leaves this page. The pose library also tries to send usage metrics to Google; this page blocks that with a Content-Security-Policy.",
+      "The pose model loads from this page's own files. No frame or video leaves this page. The pose library still tries to send usage metrics to Google; this page blocks that with a Content-Security-Policy.",
     ),
     h("div", { class: "button-row" }, cameraButton, fileLabel),
     status,
@@ -295,7 +295,7 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
       }
       s.source = opened;
       stage.hidden = false;
-      say("Loading the pose model (a one-off download of a few megabytes)…");
+      say("Loading the pose model (about 6 megabytes)…");
       const landmarker = await loadLandmarker();
       // Superseded or left while the model loaded: whoever superseded it has already released the source.
       if (!gate.isCurrent(token)) return;

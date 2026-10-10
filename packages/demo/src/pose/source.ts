@@ -2,24 +2,23 @@
  * Camera or video file in, `{ tS, landmarks }` per video frame out. DOM and the pose library only:
  * the mapping to PoseFrame is in landmarks.ts, the arithmetic is nowhere in this file.
  *
- * Nothing here stores a frame or a video. The page contacts two hosts, both for the pose library: the
- * WASM runtime (cdn.jsdelivr.net) and the model (storage.googleapis.com), the two URLs below. The library
- * also tries to post usage metrics to Google (odml.pa.googleapis.com, every 60 s; per its own privacy notice,
- * "metrics about the performance and utilization of the APIs"). index.html blocks that with a
- * Content-Security-Policy that sets connect-src to the two hosts and 'self'; test/network.test.ts pins both.
+ * Nothing here stores a frame or a video. The pose model and the WASM runtime are served from this page's own origin
+ * (public/models and public/mediapipe/wasm), so the page contacts no third-party host. The library still tries to post
+ * usage metrics to Google every 60 s (per its own privacy notice, "metrics about the performance and utilization of the
+ * APIs"); index.html blocks that with a Content-Security-Policy that sets connect-src to 'self', and
+ * test/network.test.ts pins the policy.
  */
 
 import { FilesetResolver, PoseLandmarker } from "@mediapipe/tasks-vision";
 import type { Landmark } from "./landmarks";
 
 /**
- * The pose model and the WASM runtime are fetched from these two URLs when a camera or a video file is opened.
- * AN OFFLINE BUILD MUST VENDOR BOTH: the model is a multi-megabyte binary and is deliberately not in this
- * repository. The WASM version below must equal the exact version of @mediapipe/tasks-vision in
- * packages/demo/package.json (pinned, no caret), so the JavaScript and the WASM it loads cannot drift apart.
+ * Same-origin paths. The model is committed (public/models, with NOTICE.md and its SHA-256, checked by
+ * scripts/verify-model.mjs); the WASM files are copied from the pinned @mediapipe/tasks-vision package into
+ * public/mediapipe/wasm by scripts/copy-wasm.mjs before `dev` and `build`, and are not committed.
  */
-export const POSE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
-export const POSE_WASM_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.0/wasm";
+export const POSE_MODEL_URL = `${import.meta.env.BASE_URL}models/pose_landmarker_lite.task`;
+export const POSE_WASM_BASE = `${import.meta.env.BASE_URL}mediapipe/wasm`;
 
 // ---------------------------------------------------------------------------
 // The pose model

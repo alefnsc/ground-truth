@@ -4,8 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node scripts/copy-wasm.mjs && node scripts/verify-model.mjs",
     "dev": "vite",
+    "predev:https": "node scripts/copy-wasm.mjs && node scripts/verify-model.mjs",
     "dev:https": "vite --host --mode https",
+    "prebuild": "node scripts/copy-wasm.mjs && node scripts/verify-model.mjs",
     "build": "vite build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
