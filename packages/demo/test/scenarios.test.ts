@@ -80,7 +80,8 @@ describe("resistive squats", () => {
     expect(s.peakLoad.value).toBeCloseTo(1000 + W_EARTH_N, 9);
     expect(s.peakLoad.tag).toBe("MODEL");
     expect(s.energy.value).toBeCloseTo(31843.872, 6);
-    expect(s.bout).toEqual({ cycles: 36, peakLoad: expect.closeTo(1769.104, 9) });
+    // F6: the bout is per leg (half the two-leg total, 884.552 N); it was 1769.104 N
+    expect(s.bout).toEqual({ cycles: 36, peakLoad: expect.closeTo(884.552, 9) });
   });
 
   it("ISS: only the device loads, and the energy scales the same way", () => {
@@ -119,6 +120,62 @@ describe("resistive squats", () => {
     const plain = resistiveSquats(person, ENVS.EARTH);
     const replaced = resistiveSquats(person, ENVS.EARTH, { ...SQUAT_DEFAULTS, replaceBodyWeight: true });
     expect(replaced.peakLoad.value).toBeCloseTo(plain.peakLoad.value as number, 9);
+  });
+});
+
+describe("squat bout is per leg", () => {
+  /*
+   * The run bout is the force through ONE leg (cycles = steps / 2). The squat's total force goes through both legs,
+   * so the bout takes half of it, with one cycle per rep (each rep loads each leg once).
+   *   Earth: (1000 + 769.104) / 2 = 884.552 N     Moon: (1000 + 127.008) / 2 = 563.504 N
+   *   Mars:  (1000 + 290.864) / 2 = 645.432 N     ISS:  1000 / 2 = 500 N
+   */
+  it("half the total force, one cycle per rep, in every environment", () => {
+    const expected: [keyof typeof ENVS, number][] = [["EARTH", 884.552], ["MOON", 563.504], ["MARS", 645.432], ["ISS", 500]];
+    for (const [body, peak] of expected) {
+      const s = resistiveSquats(person, ENVS[body]);
+      expect(s.bout?.cycles).toBe(36);
+      expect(s.bout?.peakLoad).toBeCloseTo(peak, 9);
+      expect(s.peakLoad.value).toBeCloseTo(2 * peak, 9); // the card still shows the two-leg total
+    }
+  });
+
+  it("says so in its details, as an assumption (the load is shared equally between the legs)", () => {
+    const d = resistiveSquats(person, ENVS.ISS).details.find((x) => x.label === "Peak load, one leg");
+    expect(d?.value).toBeCloseTo(500, 9);
+    expect(d?.tag).toBe("ASSUMPTION");
+    expect(d?.note).toMatch(/both legs/i);
+  });
+});
+
+describe("ISS run peak does not follow the harness", () => {
+  /*
+   * A harness of 0.05: F_eff = 0.05 × 769.104 = 38.4552 N, but the measured decrement was taken at maximum device
+   * settings, so the peak stays 0.25 × 2.5 × 769.104 = 480.69 N. The static value 2.5 × F_eff is shown beside it:
+   * 2.5 × 38.4552 = 96.138 N (and 2.5 × 538.3728 = 1345.932 N at the default 0.7).
+   */
+  it("keeps 480.69 N for any harness, says so, and shows the static value for comparison", () => {
+    for (const [fraction, staticN] of [[0.05, 96.138], [0.7, 1345.932]] as const) {
+      const s = treadmillRun(person, ENVS.ISS, { ...TREADMILL_DEFAULTS, supportFraction: fraction });
+      expect(s.peakLoad.value).toBeCloseTo(480.69, 9);
+      expect(s.peakLoad.note).toMatch(/maximum device settings/);
+      expect(s.peakLoad.note).toMatch(/does not vary with the harness/);
+      const st = s.details.find((d) => d.label === "Static peak, for comparison");
+      expect(st?.value).toBeCloseTo(staticN, 9);
+      expect(st?.tag).toBe("ASSUMPTION");
+    }
+  });
+  it("is not shown where the peak already is the static value", () => {
+    expect(treadmillRun(person, ENVS.MOON).details.some((d) => d.label === "Static peak, for comparison")).toBe(false);
+  });
+});
+
+describe("camera peak", () => {
+  it("is the force on the weight, not through the skeleton, and excludes body weight", () => {
+    const s = cameraSession({ id: "c", title: "c", reps: 1, totalPositiveWorkJ: 1, maxPeakForceN: 1, inputs: [], details: [] });
+    expect(s.peakLoad.note).toMatch(/force on the weight/i);
+    expect(s.peakLoad.note).toMatch(/not through the skeleton/i);
+    expect(s.peakLoad.note).toMatch(/excludes body weight/i);
   });
 });
 

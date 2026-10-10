@@ -588,3 +588,16 @@ button:disabled {
 .totals {
   margin: 12px 0 4px;
 }
+
+/* ---- caveats ---------------------------------------------------------------------------------- */
+.caveat {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-left: 4px solid #6b3f00;
+  background: #fbeacb;
+  color: #3d2400;
+  font-size: 0.9375rem;
+}
+.rests-on {
+  margin-top: 8px;
+}

@@ -145,13 +145,13 @@ describe("day tags", () => {
     }
   });
 
-  it("a day of squats only: static peak MODEL, entered counts MANUAL, so the stimulus figures are MODEL; the squat energy is ASSUMPTION", () => {
+  it("a day of squats only: the per-leg peak assumes an equal split (F6), so the stimulus figures are ASSUMPTION; cycles to match compares two-leg totals, so MODEL; the squat energy is ASSUMPTION", () => {
     const day = computeDay(person, ENVS.ISS, [squats]);
-    expect(day.stimulus.tag).toBe("MODEL");
-    expect(day.earthStimulus.tag).toBe("MODEL");
-    expect(day.stimulusRatio.tag).toBe("MODEL");
+    expect(day.stimulus.tag).toBe("ASSUMPTION"); // F6: was MODEL
+    expect(day.earthStimulus.tag).toBe("ASSUMPTION"); // F6: was MODEL
+    expect(day.stimulusRatio.tag).toBe("ASSUMPTION"); // F6: was MODEL
     expect(day.cyclesToMatch.tag).toBe("MODEL");
-    expect(deficitOverMission(day, 180).tag).toBe("MODEL");
+    expect(deficitOverMission(day, 180).tag).toBe("ASSUMPTION"); // F6: was MODEL
     expect(day.totalEnergy.tag).toBe("ASSUMPTION");
   });
 

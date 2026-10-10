@@ -4,8 +4,9 @@
  * so an input being typed in keeps its focus. One plain state object.
  */
 
-import { computeDay, deficitOverMission, runSession, type DayResult, type SessionSpec } from "../model/day";
+import { LOAD_RESTS_ON, computeDay, deficitOverMission, missingEarthDays, partialGravityCaveat, runSession, type DayResult, type SessionSpec } from "../model/day";
 import {
+  CAMERA_PEAK_SCOPE,
   CYCLE_DEFAULTS,
   ENVS,
   PARAM_FIELDS,
@@ -192,6 +193,9 @@ export function mountCurrencies(root: HTMLElement): CurrenciesView {
   const loadChip = h("span", { class: "chip-slot" });
   const loadNote = h("p", { class: "note" });
 
+  const restsOn = h("p", { class: "note rests-on" }, LOAD_RESTS_ON);
+  const caveat = h("p", { class: "caveat", hidden: true });
+
   const legend = h(
     "details",
     { class: "legend" },
@@ -225,6 +229,7 @@ export function mountCurrencies(root: HTMLElement): CurrenciesView {
         loadNote,
       ),
     ),
+    restsOn,
     legend,
   );
 
@@ -276,15 +281,17 @@ export function mountCurrencies(root: HTMLElement): CurrenciesView {
         onRemove ? h("button", { type: "button", class: "link-button", onclick: onRemove as EventListener }, "Remove") : null,
       ),
       h("div", { class: "metrics" }, energy, peak),
+      kind === "camera" ? h("p", { class: "note" }, CAMERA_PEAK_SCOPE) : null,
       h("details", { class: "card-more" }, h("summary", null, "Details, sources and parameters"), detailList, editors),
     );
     return { root, energy, peak, detailList, includeBox };
   }
 
-  type Card = { refs: CardRefs; result: () => SessionResult };
+  type Card = { kind: PresetKind | "camera"; refs: CardRefs; result: () => SessionResult };
 
   // The preset cards are built once, so an open <details> or a focused input survives "Add to today".
   const presetCards: Card[] = state.presets.map((entry) => ({
+    kind: entry.kind,
     refs: buildCard(entry.kind, entry.title, entry.kind, (on) => ((entry.included = on), update()), null),
     result: () => runSession(specOf(entry), person(), env()),
   }));
@@ -299,12 +306,12 @@ export function mountCurrencies(root: HTMLElement): CurrenciesView {
         update();
       });
       refs.includeBox.checked = c.included;
-      return { refs, result: () => c.session };
+      return { kind: "camera" as const, refs, result: () => c.session };
     });
     replace(cardList, ...allCards().map((c) => c.refs.root));
   }
 
-  const sessions = h("section", { class: "block", "aria-labelledby": "h-sessions" }, h("h2", { id: "h-sessions" }, "Sessions"), cardList);
+  const sessions = h("section", { class: "block", "aria-labelledby": "h-sessions" }, h("h2", { id: "h-sessions" }, "Sessions"), caveat, cardList);
 
   // ---- 4. mission horizon --------------------------------------------------------------------
 
@@ -320,6 +327,7 @@ export function mountCurrencies(root: HTMLElement): CurrenciesView {
   const horizonOut = h("output", { for: "horizon", class: "horizon-out" });
   const deficitValue = h("p", { class: "big-value" });
   const deficitChip = h("span", { class: "chip-slot" });
+  const deficitRaw = h("p", { class: "note" });
   const deficitNote = h("p", { class: "note" });
   const cyclesLine = h("p", { class: "cycles" });
   const cyclesChip = h("span", { class: "chip-slot" });
@@ -353,7 +361,7 @@ export function mountCurrencies(root: HTMLElement): CurrenciesView {
       ),
       horizonOut,
     ),
-    h("div", { class: "big", "aria-live": "polite" }, h("h3", null, "Cumulative deficit"), deficitValue, deficitChip, deficitNote),
+    h("div", { class: "big", "aria-live": "polite" }, h("h3", null, "Loading missing"), deficitValue, deficitChip, deficitNote, deficitRaw),
     h("div", { class: "big", "aria-live": "polite" }, h("h3", null, "Cycles to match"), cyclesLine, cyclesChip, cyclesNote),
     h("p", { class: "explain" }, "The deficit is one number for the whole skeleton. Per-compartment divergence (trabecular against cortical) is not modelled."),
   );
@@ -395,7 +403,7 @@ export function mountCurrencies(root: HTMLElement): CurrenciesView {
       const result = card.result();
       const bodyWeights = peakInBodyWeights(result, person());
       renderMetric(card.refs.energy, "Energy", formatEnergy(result.energy.value), result.energy);
-      renderMetric(card.refs.peak, "Peak load", formatForce(result.peakLoad.value), result.peakLoad, result.peakLoad.value === null ? undefined : `${formatMultiple(bodyWeights.value)} Earth body weight`);
+      renderMetric(card.refs.peak, "Peak load", formatForce(result.peakLoad.value), result.peakLoad, result.peakLoad.value === null || card.kind === "camera" ? undefined : `${formatMultiple(bodyWeights.value)} Earth body weight`);
       replace(card.refs.detailList, ...detailItems(result));
       card.refs.root.classList.toggle("excluded", !card.refs.includeBox.checked);
     }
@@ -406,20 +414,27 @@ export function mountCurrencies(root: HTMLElement): CurrenciesView {
     showQuantity(loadValue, loadChip, loadNote, formatPercent(day.stimulusRatio.value), day.stimulusRatio);
 
     const deficit = deficitOverMission(day, state.days);
+    const missing = missingEarthDays(day, state.days);
     replace(horizonOut, `${state.days} days`);
-    showQuantity(deficitValue, deficitChip, deficitNote, formatDays(deficit.value), deficit);
-    if (deficit.value !== null) deficitValue.append(h("span", { class: "unit" }, ` ${deficit.unit}`));
+    showQuantity(deficitValue, deficitChip, deficitNote, missing.value === null ? DASH : `${formatQuantity({ ...missing, unit: "" })} of ${state.days}`, missing);
+    if (missing.value !== null) deficitValue.append(h("span", { class: "unit" }, ` ${missing.unit}`));
+    replace(deficitRaw, deficit.value === null ? "" : `Raw figure: ${formatDays(deficit.value)} ${deficit.unit}. It scales with body mass.`);
 
     const cycles = day.cyclesToMatch;
     replace(
       cyclesLine,
-      cycles.value === null ? DASH : `About ${formatMultiple(cycles.value)} the loading cycles at this peak load to match the Earth stimulus.`,
+      cycles.value === null
+        ? DASH
+        : `About ${formatMultiple(cycles.value)} the daily loading cycles of the ${day.cyclesToMatchBout ?? "dominant bout"} would be needed at this peak load to match its Earth stimulus. That is not achievable by adding volume.`,
     );
     replace(cyclesChip, tagChip(cycles.tag));
     replace(cyclesNote, cycles.value === null ? `${DASH} ${cycles.note}` : cycles.note);
   }
 
   function update(): void {
+    const text = partialGravityCaveat(state.body);
+    caveat.hidden = text === null;
+    replace(caveat, text ?? "");
     renderDay(computeDay(person(), env(), includedSpecs()));
     renderCards();
   }

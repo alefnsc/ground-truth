@@ -293,6 +293,9 @@ export function treadmillRun(person: Person, env: Env, p: TreadmillParams = TREA
   );
 
   const details: Detail[] = [duration, cadence, steps, rise, multiple, harness, fEff, strikes, transition];
+  if (onIss) {
+    details.push(labelled("Static peak, for comparison", derive(p.earthPeakMultiplier * fEffN, "N", "ASSUMPTION", [multiple, fEff], "The peak if it scaled with the effective force (2.5 × F_eff), as it does in the other environments. It follows the harness field; the decrement-based peak above does not.")));
+  }
 
   if (!(fEffN > 0)) {
     const reason = "A treadmill session is not possible here: no gravity presses the foot to the belt and no harness load is applied.";
@@ -322,7 +325,7 @@ export function treadmillRun(person: Person, env: Env, p: TreadmillParams = TREA
         "N",
         "MODEL",
         [multiple, mass],
-        "The Earth peak (an ASSUMPTION multiple of body weight) reduced by the measured on-orbit decrement for running, 75 % (Genc 2010), even at maximum device settings. The harness load does not enter this figure.",
+        "The Earth peak (an ASSUMPTION multiple of body weight) reduced by the measured on-orbit decrement for running, 75 % (Genc 2010), even at maximum device settings. The decrement was measured at maximum device settings, so this peak does not vary with the harness field and does not follow the effective force.",
       )
     : derive(
         p.earthPeakMultiplier * fEffN,
@@ -365,13 +368,18 @@ export function resistiveSquats(person: Person, env: Env, p: SquatParams = SQUAT
   const bodyWeight = labelled("Body weight in this environment", derive(person.massKg * env.gEnvMs2, "N", "MODEL", [mass, gravity], "m · g_env."));
   const totalN = totalForceN(deviceN, person.massKg, env.gEnvMs2);
   const total = labelled("Total force", derive(totalN, "N", "MODEL", [applied, bodyWeight], "F_total = F_device + m · g_env (brief §2). Static: the inertial term is not included."));
-  const cycles = labelled("Loading cycles", derive(reps.value as number, "cycles", "EXACT", [reps], "One per rep."));
+  const cycles = labelled("Loading cycles", derive(reps.value as number, "cycles", "EXACT", [reps], "One per rep, on each leg."));
+  // The run's bout is the force through one leg; the squat's total force goes through both, so the bout takes half of it.
+  const perLeg = labelled(
+    "Peak load, one leg",
+    derive(totalN / 2, "N", "ASSUMPTION", [total], "Half the total force: the load is assumed to be shared equally between both legs. The daily load stimulus counts one leg for every session, so the squats are on the same per-leg basis as the run."),
+  );
   const wholeBody = labelled(
     "Whole body moved through the stroke",
     source(1, "", "ASSUMPTION", "The energy takes the total force, which includes the body's weight, over the full stroke: the whole body mass is assumed to rise by the stroke each rep. The body's centre of mass travels less than the bar in a real squat."),
   );
 
-  const peakLoad = derive(totalN, "N", "MODEL", [total], "Total force F_device + m · g_env (brief §2). Static: the inertial term of the movement is not included, so a fast rep loads more than this.");
+  const peakLoad = derive(totalN, "N", "MODEL", [total], "Total force F_device + m · g_env (brief §2), through both legs. Static: the inertial term of the movement is not included, so a fast rep loads more than this.");
   const energy = derive(
     (reps.value as number) * totalN * p.strokeM,
     "J",
@@ -384,9 +392,9 @@ export function resistiveSquats(person: Person, env: Env, p: SquatParams = SQUAT
     title: "Resistive squats",
     energy,
     peakLoad,
-    bout: { cycles: cycles.value as number, peakLoad: totalN },
-    boutInputs: [peakLoad, cycles],
-    details: [set, reps, stroke, applied, bodyWeight, total, cycles, wholeBody],
+    bout: { cycles: cycles.value as number, peakLoad: perLeg.value as number },
+    boutInputs: [perLeg, cycles],
+    details: [set, reps, stroke, applied, bodyWeight, total, perLeg, cycles, wholeBody],
   };
 }
 
@@ -442,6 +450,9 @@ export function cameraPipelineTag(): Tag {
   return VALIDATED_ON_REAL_VIDEO ? "MEASURED" : "ESTIMATE";
 }
 
+/** What a camera set's peak force is, and is not. Shown on its card and in its note. */
+export const CAMERA_PEAK_SCOPE = "The force on the weight, not through the skeleton; it excludes body weight.";
+
 export interface CameraSetInput {
   id: string;
   title: string;
@@ -472,7 +483,7 @@ export function cameraSession(set: CameraSetInput): SessionResult {
     "N",
     cameraPipelineTag(),
     set.inputs,
-    "Largest peak force over the reps, from second differences of the filtered wrist position. The noisiest output: indicative only. Not validated on real video.",
+    `Largest peak force over the reps, from second differences of the filtered wrist position. ${CAMERA_PEAK_SCOPE} The noisiest output: indicative only. Not validated on real video.`,
   );
   const cycles = derive(set.reps, "cycles", "EXACT", [energy], "One per detected rep.");
   return {

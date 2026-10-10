@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeDay, deficitOverMission, type DayResult, type SessionSpec } from "../src/model/day";
+import { LOAD_RESTS_ON, computeDay, deficitOverMission, missingEarthDays, partialGravityCaveat, type DayResult, type SessionSpec } from "../src/model/day";
 import { ENVS, cameraSession, type Person, type Quantity, type Tag } from "../src/model/scenarios";
 
 /*
@@ -63,21 +63,46 @@ describe("a day on the ISS", () => {
   });
 
   /*
-   * All three sessions. n_t = 2550, n_s = 36.
-   *   ISS:   Σ n σ⁴ = 2550 × 480.69⁴ + 36 × 1000⁴;  480.69² = 231 062.88, ² = 5.33901e10; × 2550 = 1.36145e14;
-   *          36 × 10¹² = 3.6e13; sum 1.72145e14; ^(1/4): √ = 1.31204e7, √ = 3622.2 N·cycles^¼.
-   *   Earth: 2550 × 1922.76⁴ + 36 × 1769.104⁴;  1922.76² = 3 697 006, ² = 1.36679e13; × 2550 = 3.48530e16;
-   *          1769.104² = 3 129 729, ² = 9.79520e12; × 36 = 3.52627e14; sum 3.52057e16; ^(1/4): √ = 1.87632e8, √ = 13 697.9.
-   *   Ratio = 3622.2 / 13 697.9 = 0.26444.
-   * The dominant bout on Earth is the run (3.485e16 against 3.5e14); its own peak ratio is 0.25, so 256 cycles.
+   * All three sessions, F6 convention: both bouts are per leg. n_t = 2550 (one leg's strikes), n_s = 36 (one per rep).
+   *   ISS:   run σ = 480.69, squat σ = 1000 / 2 = 500.
+   *          2550 × 480.69⁴ = 2550 × 5.33901e10 = 1.36145e14;  36 × 500⁴ = 36 × 6.25e10 = 2.25e12;
+   *          sum 1.38395e14; ^(1/4): √ = 1.17641e7, √ = 3429.9 N·cycles^¼.
+   *   Earth: run σ = 1922.76, squat σ = 1769.104 / 2 = 884.552.
+   *          2550 × 1922.76⁴ = 2550 × 1.36679e13 = 3.48530e16;  36 × 884.552⁴ = 36 × 6.12200e11 = 2.20392e13;
+   *          sum 3.48750e16; ^(1/4): √ = 1.86748e8, √ = 13 665.6.
+   *   Ratio = 3429.9 / 13 665.6 = 0.25099.
+   * The run dominates the Earth stimulus (3.485e16 against 2.2e13), so cycles to match = (480.69 / 1922.76)^−4 = 256.
    */
   it("a mixed day: the stimulus is a sum under the fourth power, and the run dominates it", () => {
     const day = computeDay(person, ENVS.ISS, [treadmill, squats, cycle]);
-    expect(day.stimulus.value).toBeCloseTo(3622.2, 0);
-    expect(day.earthStimulus.value).toBeCloseTo(13697.9, 0);
-    expect(day.stimulusRatio.value).toBeCloseTo(0.26444, 4);
+    expect(day.stimulus.value).toBeCloseTo(3429.9, 0);
+    expect(day.earthStimulus.value).toBeCloseTo(13665.6, 0);
+    expect(day.stimulusRatio.value).toBeCloseTo(0.25099, 4);
     expect(day.cyclesToMatch.value).toBeCloseTo(256, 9);
     expect(day.stimulus.value as number).toBeLessThan(day.earthStimulus.value as number);
+  });
+
+  /*
+   * The same day in all four environments (F6). Peaks: run Earth 2.5 W = 1922.76, Moon 2.5 × 127.008 = 317.52,
+   * Mars 2.5 × 290.864 = 727.16, ISS 0.625 W = 480.69; squats per leg Earth 884.552, Moon 563.504, Mars 645.432, ISS 500.
+   *   Moon: 2550 × 317.52⁴ = 2.59194e13, 36 × 563.504⁴ = 3.62987e12, sum 2.88493e13, ^(1/4) = 2331.5;  / 13 665.6 = 0.17061
+   *   Mars: 2550 × 727.16⁴ = 7.12952e14, 36 × 645.432⁴ = 6.24747e12, sum 7.19199e14, ^(1/4) = 5178.6;  / 13 665.6 = 0.37895
+   *   ISS:  3429.9 / 13 665.6 = 0.25099
+   * Cycles to match, the run's peak ratio to the power −4: Moon (317.52 / 1922.76)^−4 = (0.165138)^−4 = 1344.67;
+   * Mars (727.16 / 1922.76)^−4 = (0.378186)^−4 = 48.886; ISS 256.
+   */
+  it.each([
+    ["MOON", 0.17061, 1344.67],
+    ["MARS", 0.37895, 48.886],
+    ["ISS", 0.25099, 256],
+  ] as const)("the default day on %s: load %s of Earth, cycles to match %s", (body, ratio, cyclesTo) => {
+    const day = computeDay(person, ENVS[body], [treadmill, squats, cycle]);
+    expect(day.stimulusRatio.value).toBeCloseTo(ratio, 4);
+    expect(day.cyclesToMatch.value).toBeCloseTo(cyclesTo, 1);
+  });
+
+  it("the default day on Earth is 100 %", () => {
+    expect(computeDay(person, ENVS.EARTH, [treadmill, squats, cycle]).stimulusRatio.value).toBe(1);
   });
 
   it("energy 'barely moves'? The model says: see the numbers (a mixed day loses the weight-dependent energy)", () => {
@@ -184,6 +209,56 @@ describe("provenance on every number", () => {
           expect(q.value === null || Number.isFinite(q.value)).toBe(true);
         }
       }
+    }
+  });
+});
+
+describe("Earth-day equivalents (M3)", () => {
+  // (1 − ratio) × days. The run alone on the ISS: (1 − 0.25) × 180 = 135. The default day: (1 − 0.25099) × 180 = 134.82.
+  it("is (1 − ratio) × days", () => {
+    expect(missingEarthDays(computeDay(person, ENVS.ISS, [treadmill]), 180).value).toBeCloseTo(135, 9);
+    expect(missingEarthDays(computeDay(person, ENVS.ISS, [treadmill, squats, cycle]), 180).value).toBeCloseTo(134.82, 2);
+    expect(missingEarthDays(computeDay(person, ENVS.ISS, [treadmill]), 1095).value).toBeCloseTo(0.75 * 1095, 9);
+  });
+  it("is zero on Earth, null with a reason when the day has no load term, and not negative", () => {
+    expect(missingEarthDays(computeDay(person, ENVS.EARTH, [treadmill]), 180).value).toBe(0);
+    const none = missingEarthDays(computeDay(person, ENVS.ISS, [cycle]), 180);
+    expect(none.value).toBeNull();
+    expect(none.note).toMatch(/no skeletal load term/i);
+    const measured = cameraSession({ id: "c", title: "c", reps: 1, totalPositiveWorkJ: 1, maxPeakForceN: 1, inputs: [], details: [] });
+    expect(missingEarthDays(computeDay(person, ENVS.ISS, [{ kind: "camera", session: measured }]), 180).value).toBe(0);
+  });
+  it("has the tag of the ratio it comes from", () => {
+    const day = computeDay(person, ENVS.ISS, [treadmill]);
+    expect(missingEarthDays(day, 180).tag).toBe(day.stimulusRatio.tag);
+  });
+  it("rejects a horizon that is not positive", () => {
+    expect(() => missingEarthDays(computeDay(person, ENVS.ISS, [treadmill]), 0)).toThrow(RangeError);
+  });
+});
+
+describe("what the cycles-to-match figure refers to (M4)", () => {
+  it("names the dominant bout", () => {
+    expect(computeDay(person, ENVS.ISS, [treadmill, squats]).cyclesToMatchBout).toBe("treadmill run");
+    expect(computeDay(person, ENVS.ISS, [squats]).cyclesToMatchBout).toBe("resistive squats");
+    expect(computeDay(person, ENVS.ISS, [cycle]).cyclesToMatchBout).toBeNull();
+  });
+});
+
+describe("partial-gravity caveat and the assumptions the Load number rests on (F6)", () => {
+  it("is shown for the Moon and Mars, with the wording the review asked for, and not for Earth or the ISS", () => {
+    for (const body of ["MOON", "MARS"] as const) {
+      expect(partialGravityCaveat(body)).toBe(
+        "The ISS run uses a measured decrement (Genc 2010). No such measurement exists for the Moon or Mars, so their run peak is an assumption (2.5 × effective weight, no harness). Do not compare these rows with the ISS row.",
+      );
+    }
+    expect(partialGravityCaveat("EARTH")).toBeNull();
+    expect(partialGravityCaveat("ISS")).toBeNull();
+  });
+
+  it("the Load number lists what it rests on", () => {
+    for (const piece of ["exponent m = 4", "proportional to force", "per leg", "2.5 body-weight", "steps / 2", "Genc"]) {
+      expect(LOAD_RESTS_ON).toContain(piece);
     }
   });
 });

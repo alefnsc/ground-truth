@@ -6,7 +6,7 @@
  * Load accounting, not a measurement or prediction of bone.
  */
 
-import { LOAD_STIMULUS_EXPONENT, cumulativeDeficit, cyclesToMatch, dailyLoadStimulus, type LoadBout } from "@ground-truth/physics";
+import { LOAD_STIMULUS_EXPONENT, cumulativeDeficit, cyclesToMatch, dailyLoadStimulus, type Body, type LoadBout } from "@ground-truth/physics";
 import {
   CYCLE_DEFAULTS,
   EARTH_ENV,
@@ -53,6 +53,19 @@ export interface DayResult {
   earthStimulus: Quantity; // same person, same sessions, body EARTH
   stimulusRatio: Quantity; // stimulus / earthStimulus
   cyclesToMatch: Quantity; // cyclesToMatch(peak ratio of the dominant bout), null when the ratio is 0 or >= 1
+  /** The session whose bout `cyclesToMatch` refers to (lower case, e.g. "treadmill run"), or null when there is none. */
+  cyclesToMatchBout: string | null;
+}
+
+/** What the Load number rests on, one line, shown under it. */
+export const LOAD_RESTS_ON =
+  "Rests on: exponent m = 4 (Carter, Whalen and Beaupré); stress at the bone proportional to force; the static squat peak, per leg; the 2.5 body-weight running multiple (an assumption); steps / 2 loading cycles per leg; the Genc 2010 decrement on the ISS.";
+
+/** Shown with the Moon or Mars selected, without opening anything. Null elsewhere. */
+export function partialGravityCaveat(body: Body): string | null {
+  return body === "MOON" || body === "MARS"
+    ? "The ISS run uses a measured decrement (Genc 2010). No such measurement exists for the Moon or Mars, so their run peak is an assumption (2.5 × effective weight, no harness). Do not compare these rows with the ISS row."
+    : null;
 }
 
 const STIMULUS_UNIT = "N·cycles^(1/4)";
@@ -152,7 +165,8 @@ export function computeDay(person: Person, env: Env, specs: readonly SessionSpec
     }
   }
 
-  return { sessions, totalEnergy, stimulus, earthStimulus, stimulusRatio, cyclesToMatch: cycles };
+  const cyclesToMatchBout = dominant < 0 ? null : (sessions[dominant] as SessionResult).title.toLowerCase();
+  return { sessions, totalEnergy, stimulus, earthStimulus, stimulusRatio, cyclesToMatch: cycles, cyclesToMatchBout };
 }
 
 /**
@@ -179,5 +193,24 @@ export function deficitOverMission(day: DayResult, days: number): Quantity {
     "EXACT",
     inputs,
     `(Earth stimulus − stimulus) × ${days} days: this day repeated unchanged every day, with no adaptation or recovery modelled. Load accounting, not a prediction of bone. Per-compartment (trabecular, cortical) behaviour is not modelled.`,
+  );
+}
+
+/**
+ * The deficit as Earth-days of loading missing: (1 − ratio) × days, so "134.8 of 180 Earth-days of loading missing".
+ * It does not scale with body mass, unlike stimulus-days. Never negative: a surplus is not reported as negative days.
+ * Null when the day has no load term to compare.
+ */
+export function missingEarthDays(day: DayResult, days: number): Quantity {
+  if (!Number.isFinite(days) || days <= 0) throw new RangeError(`days must be a finite number > 0, got ${days}`);
+  const unit = "Earth-days of loading missing";
+  const ratio = day.stimulusRatio;
+  if (ratio.value === null) return derive(null, unit, "EXACT", [ratio], ratio.note);
+  return derive(
+    Math.max(0, (1 - ratio.value) * days),
+    unit,
+    "EXACT",
+    [ratio],
+    `(1 − load ratio) × ${days} days: the part of ${days} days of Earth-equivalent loading that this day repeated every day does not supply. The same information as the stimulus-days, without the body-mass scale. Load accounting, not a prediction of bone.`,
   );
 }
