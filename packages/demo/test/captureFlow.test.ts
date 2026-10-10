@@ -110,14 +110,14 @@ describe("inputs", () => {
 describe("a recording that is analysed", () => {
   const outcome = analyseRecording(syntheticSession(lift), earth, label);
 
-  it("becomes a camera SessionResult: MEASURED energy and peak load, and a bout of the reps", () => {
+  it("becomes a camera SessionResult: ESTIMATE energy and peak load (unvalidated), and a bout of the reps", () => {
     expect(outcome.kind).toBe("analysed");
     if (outcome.kind !== "analysed") return;
     const s = outcome.session;
     expect(s.id).toBe("camera-1");
     expect(s.title).toBe("Camera set");
-    expect(s.energy.tag).toBe("MEASURED");
-    expect(s.peakLoad.tag).toBe("MEASURED");
+    expect(s.energy.tag).toBe("ESTIMATE"); // F2: was MEASURED
+    expect(s.peakLoad.tag).toBe("ESTIMATE"); // F2: was MEASURED
     expect(s.energy.value as number).toBeGreaterThan(147.15 * 0.97);
     expect(s.energy.value as number).toBeLessThan(147.15 * 1.03);
     expect(s.peakLoad.value as number).toBeGreaterThan(126.97 * 0.97);

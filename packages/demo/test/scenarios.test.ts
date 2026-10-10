@@ -135,7 +135,7 @@ describe("treadmill run", () => {
     expect(fEff?.value).toBeCloseTo(769.104, 9);
     expect(s.energy.value).toBeCloseTo(313794.432, 6);
     expect(s.peakLoad.value).toBeCloseTo(1922.76, 9);
-    expect(s.energy.tag).toBe("MODEL");
+    expect(s.energy.tag).toBe("ASSUMPTION"); // F2: was MODEL; cadence and centre-of-mass rise are assumptions
     expect(s.bout?.cycles).toBe(2550);
   });
 
@@ -151,7 +151,7 @@ describe("treadmill run", () => {
     expect(fEff?.value).toBeCloseTo(538.3728, 9);
     expect(s.energy.value).toBeCloseTo(219656.1024, 6);
     expect(s.peakLoad.value).toBeCloseTo(480.69, 9);
-    expect(s.peakLoad.tag).toBe("MODEL");
+    expect(s.peakLoad.tag).toBe("ASSUMPTION"); // F2: was MODEL; the 2.5 body-weight multiple it scales is an assumption
     const froude = s.details.find((d) => d.label === "Walk-run transition speed");
     expect(froude?.value).toBeCloseTo(1.7579, 3);
   });
@@ -197,23 +197,24 @@ describe("treadmill run", () => {
 });
 
 describe("camera set", () => {
-  it("is MEASURED, carries a bout of the rep count at the largest peak force, and keeps its details", () => {
+  it("is ESTIMATE until validated, carries a bout of the rep count at the largest peak force, and keeps its details", () => {
     const s = cameraSession({
       id: "camera-1",
       title: "Camera set",
       reps: 3,
       totalPositiveWorkJ: 147.15,
       maxPeakForceN: 127,
+      inputs: [],
       details: [{ label: "Scale", value: 0.4, unit: "m per frame height", tag: "ESTIMATE", note: "n" }],
     });
-    expect(s.energy).toMatchObject({ value: 147.15, unit: "J", tag: "MEASURED" });
-    expect(s.peakLoad).toMatchObject({ value: 127, unit: "N", tag: "MEASURED" });
+    expect(s.energy).toMatchObject({ value: 147.15, unit: "J", tag: "ESTIMATE" }); // F2: was MEASURED
+    expect(s.peakLoad).toMatchObject({ value: 127, unit: "N", tag: "ESTIMATE" }); // F2: was MEASURED
     expect(s.bout).toEqual({ cycles: 3, peakLoad: 127 });
     expect(s.details).toHaveLength(1);
   });
 
   it("with no reps there is no bout", () => {
-    expect(cameraSession({ id: "c", title: "c", reps: 0, totalPositiveWorkJ: 0, maxPeakForceN: 0, details: [] }).bout).toBeNull();
+    expect(cameraSession({ id: "c", title: "c", reps: 0, totalPositiveWorkJ: 0, maxPeakForceN: 0, inputs: [], details: [] }).bout).toBeNull();
   });
 });
 

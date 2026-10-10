@@ -13,11 +13,10 @@ import {
   SQUAT_DEFAULTS,
   TREADMILL_DEFAULTS,
   cycleErgometer,
-  quantity,
+  derive,
   resistiveSquats,
   treadmillRun,
   validatePerson,
-  weakestTag,
   type CycleParams,
   type Env,
   type Person,
@@ -64,14 +63,14 @@ function bouts(sessions: readonly SessionResult[]): LoadBout[] {
 }
 
 function stimulusOf(sessions: readonly SessionResult[], where: string): Quantity {
-  const contributing = sessions.filter((s) => s.bout !== null);
-  const tag = weakestTag(contributing.map((s) => s.peakLoad.tag));
-  if (contributing.length === 0) return quantity(0, STIMULUS_UNIT, tag, `${NO_LOAD_TERM} So the stimulus is 0 ${where}.`);
-  return quantity(
+  const inputs = sessions.flatMap((s) => (s.bout ? s.boutInputs : []));
+  if (inputs.length === 0) return derive(0, STIMULUS_UNIT, "MODEL", [], `${NO_LOAD_TERM} So the stimulus is 0 ${where}.`);
+  return derive(
     dailyLoadStimulus(bouts(sessions)),
     STIMULUS_UNIT,
-    tag,
-    `S = (Σ n · σ^${LOAD_STIMULUS_EXPONENT})^(1/${LOAD_STIMULUS_EXPONENT}) over the day's bouts ${where} (Carter, Whalen and Beaupré; brief §2). Load accounting, not a measurement or prediction of bone. Tag: the least certain of the peak loads that enter it.`,
+    "MODEL",
+    inputs,
+    `S = (Σ n · σ^${LOAD_STIMULUS_EXPONENT})^(1/${LOAD_STIMULUS_EXPONENT}) over the day's bouts ${where} (Carter, Whalen and Beaupré; brief §2). Load accounting, not a measurement or prediction of bone. Tag: the least certain of the peak loads and cycle counts that enter it.`,
   );
 }
 
@@ -84,33 +83,34 @@ export function computeDay(person: Person, env: Env, specs: readonly SessionSpec
   const energies = sessions.flatMap((s) => (s.energy.value === null ? [] : [s.energy]));
   let totalEnergy: Quantity;
   if (sessions.length === 0) {
-    totalEnergy = quantity(0, "J", "MODEL", "No sessions in this day.");
+    totalEnergy = derive(0, "J", "MODEL", [], "No sessions in this day.");
   } else if (energies.length === 0) {
-    totalEnergy = quantity(null, "J", "MODEL", "None of the sessions in this day can be computed in this environment.");
+    totalEnergy = derive(null, "J", "MODEL", sessions.map((s) => s.energy), "None of the sessions in this day can be computed in this environment.");
   } else {
     const skipped = sessions.length - energies.length;
-    totalEnergy = quantity(
+    totalEnergy = derive(
       energies.reduce((sum, e) => sum + (e.value as number), 0),
       "J",
-      weakestTag(energies.map((e) => e.tag)),
+      "EXACT",
+      energies,
       `Mechanical work summed over the sessions${skipped > 0 ? ` that can be computed here (${skipped} cannot)` : ""}. Tag: the least certain of the energies summed. Mechanical work, not metabolic energy.`,
     );
   }
 
   // Stimulus here and on Earth.
-  const stimulus = stimulusOf(sessions, `in this environment`);
+  const stimulus = stimulusOf(sessions, "in this environment");
   const earthStimulus = stimulusOf(earthSessions, "on Earth");
-  const ratioTag = weakestTag([stimulus.tag, earthStimulus.tag]);
 
   // Ratio.
   let stimulusRatio: Quantity;
   if (earthStimulus.value === 0 || earthStimulus.value === null || stimulus.value === null) {
-    stimulusRatio = quantity(null, "× Earth", ratioTag, `${NO_LOAD_TERM} The same day on Earth has none either, so there is nothing to compare.`);
+    stimulusRatio = derive(null, "× Earth", "EXACT", [stimulus, earthStimulus], `${NO_LOAD_TERM} The same day on Earth has none either, so there is nothing to compare.`);
   } else {
-    stimulusRatio = quantity(
+    stimulusRatio = derive(
       stimulus.value / earthStimulus.value,
       "× Earth",
-      ratioTag,
+      "EXACT",
+      [stimulus, earthStimulus],
       "Daily load stimulus as a fraction of the same day of sessions on Earth, same person. Tag: the least certain of the two stimuli. Load accounting, not a measurement or prediction of bone.",
     );
   }
@@ -128,21 +128,25 @@ export function computeDay(person: Person, env: Env, specs: readonly SessionSpec
     }
   });
   if (dominant < 0) {
-    cycles = quantity(null, "× cycles", ratioTag, `${NO_LOAD_TERM} There is no peak load to compare.`);
+    cycles = derive(null, "× cycles", "EXACT", [stimulus, earthStimulus], `${NO_LOAD_TERM} There is no peak load to compare.`);
   } else {
-    const here = (sessions[dominant] as SessionResult).bout;
-    const there = (earthSessions[dominant] as SessionResult).bout as LoadBout;
+    const hereSession = sessions[dominant] as SessionResult;
+    const thereSession = earthSessions[dominant] as SessionResult;
+    const here = hereSession.bout;
+    const there = thereSession.bout as LoadBout;
     const peakRatio = (here?.peakLoad ?? 0) / there.peakLoad;
-    const basis = `the ${(sessions[dominant] as SessionResult).title.toLowerCase()} (the bout that contributes most to the day on Earth)`;
+    const basis = `the ${hereSession.title.toLowerCase()} (the bout that contributes most to the day on Earth)`;
+    const inputs = [hereSession.peakLoad, thereSession.peakLoad];
     if (peakRatio <= 0) {
-      cycles = quantity(null, "× cycles", weakestTag([ratioTag, "MODEL"]), `Peak load is 0 for ${basis}, so no number of extra cycles makes it up.`);
+      cycles = derive(null, "× cycles", "MODEL", inputs, `Peak load is 0 for ${basis}, so no number of extra cycles makes it up.`);
     } else if (peakRatio >= 1) {
-      cycles = quantity(null, "× cycles", weakestTag([ratioTag, "MODEL"]), `Peak load for ${basis} is not below its Earth value, so no extra cycles are needed.`);
+      cycles = derive(null, "× cycles", "MODEL", inputs, `Peak load for ${basis} is not below its Earth value, so no extra cycles are needed.`);
     } else {
-      cycles = quantity(
+      cycles = derive(
         cyclesToMatch(peakRatio),
         "× cycles",
-        weakestTag([ratioTag, "MODEL"]),
+        "MODEL",
+        inputs,
         `How many times the loading cycles are needed at this peak load to match the Earth stimulus: (peak ratio)^−${LOAD_STIMULUS_EXPONENT}, for ${basis}. Assumes the stress at the bone scales with the force, which is this package's assumption.`,
       );
     }
@@ -158,9 +162,9 @@ export function computeDay(person: Person, env: Env, specs: readonly SessionSpec
 export function deficitOverMission(day: DayResult, days: number): Quantity {
   if (!Number.isFinite(days) || days <= 0) throw new RangeError(`days must be a finite number > 0, got ${days}`);
   const unit = "stimulus-days below the Earth baseline";
-  const tag = weakestTag([day.stimulus.tag, day.earthStimulus.tag]);
+  const inputs = [day.stimulus, day.earthStimulus];
   if (day.earthStimulus.value === null || day.earthStimulus.value === 0 || day.stimulus.value === null) {
-    return quantity(null, unit, tag, `${NO_LOAD_TERM} There is no Earth baseline to fall below.`);
+    return derive(null, unit, "EXACT", inputs, `${NO_LOAD_TERM} There is no Earth baseline to fall below.`);
   }
   const deficit = cumulativeDeficit(
     [
@@ -169,10 +173,11 @@ export function deficitOverMission(day: DayResult, days: number): Quantity {
     ],
     day.earthStimulus.value,
   );
-  return quantity(
+  return derive(
     deficit,
     unit,
-    tag,
+    "EXACT",
+    inputs,
     `(Earth stimulus − stimulus) × ${days} days: this day repeated unchanged every day, with no adaptation or recovery modelled. Load accounting, not a prediction of bone. Per-compartment (trabecular, cortical) behaviour is not modelled.`,
   );
 }

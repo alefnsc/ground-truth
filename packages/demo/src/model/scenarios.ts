@@ -10,6 +10,7 @@
  * `weakestTag`.
  */
 
+import { VALIDATED_ON_REAL_VIDEO } from "@ground-truth/capture";
 import {
   G_ENV_MS2,
   GENC_2010_PEAK_LOAD_DECREMENT,
@@ -45,6 +46,8 @@ export interface SessionResult {
   energy: Quantity; // mechanical work, J
   peakLoad: Quantity; // N
   bout: LoadBout | null; // null when the session has no skeletal load term in this model
+  /** The quantities the bout's peak and cycle count come from, so the day's stimulus takes their tags. Empty when `bout` is null. */
+  boutInputs: Quantity[];
   details: Detail[]; // parameters and intermediate values shown on expand
 }
 
@@ -70,29 +73,50 @@ export const ENVS: Readonly<Record<Body, Env>> = {
 };
 
 // ---------------------------------------------------------------------------
-// Tags
+// Tags. A number is no more certain than its least certain input.
 // ---------------------------------------------------------------------------
 
 /**
- * Least to most assumed, following the physics README ("Measured versus estimated"): numbers computed from
+ * Strongest to weakest, following the physics README ("Measured versus estimated"): numbers computed from
  * the inputs, then a published model with stated parameters, then calibrated or estimated, then a parameter
  * this demo chose.
  */
 const TAG_ORDER: readonly Tag[] = ["MEASURED", "MANUAL", "MODEL", "CALIBRATED", "ESTIMATE", "ASSUMPTION"];
 
-/** The most assumed of the tags: a sum or a ratio is no better sourced than its weakest part. An empty list is MODEL. */
+/** The weakest (least certain) of the tags. An empty list is MODEL. */
 export function weakestTag(tags: readonly Tag[]): Tag {
   let worst = -1;
   for (const tag of tags) worst = Math.max(worst, TAG_ORDER.indexOf(tag));
   return worst < 0 ? "MODEL" : (TAG_ORDER[worst] as Tag);
 }
 
-export function quantity(value: number | null, unit: string, tag: Tag, note: string): Quantity {
+/** The tag of a formula step. `EXACT` is plain arithmetic: it adds no uncertainty of its own, only its inputs'. */
+export type Formula = Tag | "EXACT";
+
+/**
+ * A value that is entered, chosen by this demo, or measured: it has no inputs, so its tag is typed here. Use
+ * `derive` for anything computed from other quantities.
+ */
+export function source(value: number | null, unit: string, tag: Tag, note: string): Quantity {
   return { value, unit, tag, note };
 }
 
-function detail(label: string, value: number | null, unit: string, tag: Tag, note: string): Detail {
-  return { label, value, unit, tag, note };
+/**
+ * A value computed from other quantities. Its tag is the weakest of the formula's own tag and every input's, so a
+ * derived tag cannot be written by hand. An EXACT formula needs at least one input (there would be nothing to take a
+ * tag from). `value` null means not computable, and the note then says why.
+ */
+export function derive(value: number | null, unit: string, formula: Formula, inputs: readonly Quantity[], note: string): Quantity {
+  if (note.trim() === "") throw new RangeError("a derived quantity needs a note");
+  if (formula === "EXACT" && inputs.length === 0) throw new RangeError("an EXACT formula needs at least one input to take its tag from");
+  const tags = inputs.map((q) => q.tag);
+  if (formula !== "EXACT") tags.push(formula);
+  return { value, unit, tag: weakestTag(tags), note };
+}
+
+/** A labelled copy of a quantity, for a session's details. */
+export function labelled(label: string, q: Quantity): Detail {
+  return { label, ...q };
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +219,13 @@ export function validatePerson(person: Person): void {
 }
 
 // ---------------------------------------------------------------------------
+// Inputs common to every preset
+// ---------------------------------------------------------------------------
+
+const massOf = (person: Person): Detail => labelled("Body mass", source(person.massKg, "kg", "MANUAL", "Entered."));
+const gravityOf = (env: Env): Detail => labelled("Gravity", source(env.gEnvMs2, "m/s²", "MODEL", "Gravity of the environment (brief §2); about 0 on the ISS."));
+
+// ---------------------------------------------------------------------------
 // Treadmill run
 // ---------------------------------------------------------------------------
 
@@ -209,84 +240,99 @@ export function treadmillRun(person: Person, env: Env, p: TreadmillParams = TREA
   }
 
   const onIss = env.body === "ISS";
-  const steps = (p.durationS / 60) * p.cadenceStepsPerMin;
-  const harnessFraction = onIss ? p.supportFraction : 0;
-  const fEffN = treadmillEffectiveForceN(person.massKg, env.gEnvMs2, harnessFraction);
-  // On the T2 treadmill the relevant gravity for gait is the harness-supplied one, not the cabin's 0 (physics README).
-  const gaitG = onIss ? p.supportFraction * STANDARD_GRAVITY_MS2 : env.gEnvMs2;
-  const transitionMs = froudeTransitionSpeedMs(gaitG, person.legLengthM);
-  const earthBodyWeightN = person.massKg * STANDARD_GRAVITY_MS2;
-  const strikesPerLeg = steps / 2;
-
-  const details: Detail[] = [
-    detail("Duration", p.durationS, "s", "MANUAL", "Session length, entered."),
-    detail("Cadence", p.cadenceStepsPerMin, "steps/min", "ASSUMPTION", "Chosen by this demo; not measured on anyone."),
-    detail("Steps", steps, "steps", "ASSUMPTION", "Duration × cadence."),
-    detail("Vertical travel of the centre of mass per step", p.comVerticalM, "m", "ASSUMPTION", "Chosen by this demo; the brief gives the formula but no value."),
-    detail("Earth peak force", p.earthPeakMultiplier, "× body weight", "ASSUMPTION", "Running peak vertical force is commonly cited at 2 to 3 body weights; this demo takes 2.5."),
-    detail(
-      "Harness load",
+  const mass = massOf(person);
+  const gravity = gravityOf(env);
+  const duration = labelled("Duration", source(p.durationS, "s", "MANUAL", "Session length, entered."));
+  const cadence = labelled("Cadence", source(p.cadenceStepsPerMin, "steps/min", "ASSUMPTION", "Chosen by this demo; not measured on anyone."));
+  const rise = labelled(
+    "Vertical travel of the centre of mass per step",
+    source(p.comVerticalM, "m", "ASSUMPTION", "Chosen by this demo; the brief gives the formula but no value."),
+  );
+  const multiple = labelled(
+    "Earth peak force",
+    source(p.earthPeakMultiplier, "× body weight", "ASSUMPTION", "Running peak vertical force is commonly cited at 2 to 3 body weights; this demo takes 2.5."),
+  );
+  const harness = labelled(
+    "Harness load",
+    source(
       p.supportFraction,
       "× 1 g body weight",
       "MANUAL",
       onIss ? "Subject load device setting, applied here (ISS)." : "Subject load device setting; used on the ISS only, not applied in this environment.",
     ),
-    detail(
-      "Effective force",
+  );
+
+  const steps = labelled("Steps", derive((p.durationS / 60) * p.cadenceStepsPerMin, "steps", "EXACT", [duration, cadence], "Duration × cadence."));
+  const strikes = labelled(
+    "Loading cycles, one leg",
+    derive((steps.value as number) / 2, "cycles", "ASSUMPTION", [steps], "One foot strike per stride on a given leg: half the steps. The load stimulus counts cycles at one site."),
+  );
+  const harnessFraction = onIss ? p.supportFraction : 0;
+  const fEffN = treadmillEffectiveForceN(person.massKg, env.gEnvMs2, harnessFraction);
+  const fEff = labelled(
+    "Effective force",
+    derive(
       fEffN,
       "N",
       "MODEL",
+      onIss ? [mass, gravity, harness] : [mass, gravity],
       onIss ? "F_eff = m · g_env + harness load × m · 1 g (brief §2). A static model, not a measured ground reaction force." : "F_eff = m · g_env (brief §2). A static model, not a measured ground reaction force.",
     ),
-    detail("Loading cycles, one leg", strikesPerLeg, "cycles", "ASSUMPTION", "One foot strike per stride on a given leg: half the steps. The load stimulus counts cycles at one site."),
-    detail(
-      "Walk-run transition speed",
-      transitionMs,
+  );
+  // On the T2 treadmill the relevant gravity for gait is the harness-supplied one, not the cabin's 0 (physics README).
+  const gaitG = onIss ? p.supportFraction * STANDARD_GRAVITY_MS2 : env.gEnvMs2;
+  const transition = labelled(
+    "Walk-run transition speed",
+    derive(
+      froudeTransitionSpeedMs(gaitG, person.legLengthM),
       "m/s",
       "MODEL",
+      onIss ? [harness] : [gravity],
       onIss ? "√(Fr · g · L) with Fr = 0.5 and g the harness-supplied gravity (brief §2)." : "√(Fr · g · L) with Fr = 0.5 (brief §2). Gait does not scale linearly between gravities.",
     ),
-  ];
+  );
+
+  const details: Detail[] = [duration, cadence, steps, rise, multiple, harness, fEff, strikes, transition];
 
   if (!(fEffN > 0)) {
     const reason = "A treadmill session is not possible here: no gravity presses the foot to the belt and no harness load is applied.";
     return {
       id: "treadmill",
       title: "Treadmill run",
-      energy: quantity(null, "J", "MODEL", reason),
-      peakLoad: quantity(null, "N", "MODEL", reason),
+      energy: derive(null, "J", "MODEL", [mass, gravity], reason),
+      peakLoad: derive(null, "N", "MODEL", [mass, gravity], reason),
       bout: null,
+      boutInputs: [],
       details,
     };
   }
 
-  const energyJ = steps * fEffN * p.comVerticalM;
-  const energy = quantity(
-    energyJ,
+  const energy = derive(
+    (steps.value as number) * fEffN * p.comVerticalM,
     "J",
     "MODEL",
-    "Steps × F_eff × vertical travel of the centre of mass per step (brief §2). Mechanical work only, not metabolic energy. Uses two ASSUMPTION parameters: cadence and vertical travel.",
+    [steps, fEff, rise],
+    "Steps × F_eff × vertical travel of the centre of mass per step (brief §2). Mechanical work only, not metabolic energy. Rests on two ASSUMPTION parameters: cadence and vertical travel.",
   );
 
-  let peakLoad: Quantity;
-  if (onIss) {
-    const earthPeakN = p.earthPeakMultiplier * earthBodyWeightN;
-    peakLoad = quantity(
-      earthPeakN * (1 - GENC_2010_PEAK_LOAD_DECREMENT.running),
-      "N",
-      "MODEL",
-      "The Earth peak (an ASSUMPTION multiple of body weight) reduced by the measured on-orbit decrement for running, 75 % (Genc 2010), even at maximum device settings. The harness load does not enter this figure.",
-    );
-  } else {
-    peakLoad = quantity(
-      p.earthPeakMultiplier * fEffN,
-      "N",
-      "ASSUMPTION",
-      "Peak assumed to scale with the effective weight. Partial-gravity running is not a scaled copy of Earth running, so treat this as indicative.",
-    );
-  }
+  const earthBodyWeightN = person.massKg * STANDARD_GRAVITY_MS2;
+  const peakLoad = onIss
+    ? derive(
+        p.earthPeakMultiplier * earthBodyWeightN * (1 - GENC_2010_PEAK_LOAD_DECREMENT.running),
+        "N",
+        "MODEL",
+        [multiple, mass],
+        "The Earth peak (an ASSUMPTION multiple of body weight) reduced by the measured on-orbit decrement for running, 75 % (Genc 2010), even at maximum device settings. The harness load does not enter this figure.",
+      )
+    : derive(
+        p.earthPeakMultiplier * fEffN,
+        "N",
+        "ASSUMPTION",
+        [multiple, fEff],
+        "Peak assumed to scale with the effective weight. Partial-gravity running is not a scaled copy of Earth running, so treat this as indicative.",
+      );
 
-  return { id: "treadmill", title: "Treadmill run", energy, peakLoad, bout: { cycles: strikesPerLeg, peakLoad: peakLoad.value as number }, details };
+  return { id: "treadmill", title: "Treadmill run", energy, peakLoad, bout: { cycles: strikes.value as number, peakLoad: peakLoad.value as number }, boutInputs: [peakLoad, strikes], details };
 }
 
 // ---------------------------------------------------------------------------
@@ -300,33 +346,48 @@ export function resistiveSquats(person: Person, env: Env, p: SquatParams = SQUAT
   requirePositiveFinite("repsPerSet", p.repsPerSet);
   requirePositiveFinite("strokeM", p.strokeM);
 
-  const reps = p.sets * p.repsPerSet;
+  const mass = massOf(person);
+  const gravity = gravityOf(env);
+  const set = labelled("Device force set", source(p.deviceForceN, "N", "MANUAL", "Entered."));
+  const reps = labelled("Sets × reps", source(p.sets * p.repsPerSet, "reps", "MANUAL", `${p.sets} sets of ${p.repsPerSet}, entered.`));
+  const stroke = labelled("Stroke", source(p.strokeM, "m", "MANUAL", "Entered."));
+
   // Body-weight replacement: the setting is a target for the total on Earth; the device supplies what the environment does not.
   const deviceN = p.replaceBodyWeight
     ? deviceForceForEarthEquivalenceN(p.deviceForceN + person.massKg * STANDARD_GRAVITY_MS2, person.massKg, env.gEnvMs2)
     : p.deviceForceN;
-  const bodyWeightN = person.massKg * env.gEnvMs2;
+  const applied = labelled(
+    "Device force applied",
+    p.replaceBodyWeight
+      ? derive(deviceN, "N", "MODEL", [set, mass, gravity], "F_device = F_target − m · g_env, with the target the setting plus the full Earth body weight (brief §2).")
+      : derive(deviceN, "N", "EXACT", [set], "As entered; the body weight the environment lacks is not added."),
+  );
+  const bodyWeight = labelled("Body weight in this environment", derive(person.massKg * env.gEnvMs2, "N", "MODEL", [mass, gravity], "m · g_env."));
   const totalN = totalForceN(deviceN, person.massKg, env.gEnvMs2);
+  const total = labelled("Total force", derive(totalN, "N", "MODEL", [applied, bodyWeight], "F_total = F_device + m · g_env (brief §2). Static: the inertial term is not included."));
+  const cycles = labelled("Loading cycles", derive(reps.value as number, "cycles", "EXACT", [reps], "One per rep."));
+  const wholeBody = labelled(
+    "Whole body moved through the stroke",
+    source(1, "", "ASSUMPTION", "The energy takes the total force, which includes the body's weight, over the full stroke: the whole body mass is assumed to rise by the stroke each rep. The body's centre of mass travels less than the bar in a real squat."),
+  );
 
-  const details: Detail[] = [
-    detail("Device force set", p.deviceForceN, "N", "MANUAL", "Entered."),
-    detail("Sets × reps", reps, "reps", "MANUAL", `${p.sets} sets of ${p.repsPerSet}, entered.`),
-    detail("Stroke", p.strokeM, "m", "MANUAL", "Entered."),
-    detail(
-      "Device force applied",
-      deviceN,
-      "N",
-      p.replaceBodyWeight ? "MODEL" : "MANUAL",
-      p.replaceBodyWeight ? "F_device = F_target − m · g_env, with the target the setting plus the full Earth body weight (brief §2)." : "As entered; the body weight the environment lacks is not added.",
-    ),
-    detail("Body weight in this environment", bodyWeightN, "N", "MODEL", "m · g_env."),
-    detail("Total force", totalN, "N", "MODEL", "F_total = F_device + m · g_env (brief §2). Static: the inertial term is not included."),
-    detail("Loading cycles", reps, "cycles", "MANUAL", "One per rep, both legs together."),
-  ];
-
-  const peakLoad = quantity(totalN, "N", "MODEL", "Total force F_device + m · g_env (brief §2). Static: the inertial term of the movement is not included, so a fast rep loads more than this.");
-  const energy = quantity(reps * totalN * p.strokeM, "J", "MODEL", "Reps × total force × stroke: concentric work only, force taken as constant over the stroke (brief §2).");
-  return { id: "squats", title: "Resistive squats", energy, peakLoad, bout: { cycles: reps, peakLoad: totalN }, details };
+  const peakLoad = derive(totalN, "N", "MODEL", [total], "Total force F_device + m · g_env (brief §2). Static: the inertial term of the movement is not included, so a fast rep loads more than this.");
+  const energy = derive(
+    (reps.value as number) * totalN * p.strokeM,
+    "J",
+    "MODEL",
+    [reps, total, stroke, wholeBody],
+    "Reps × total force × stroke: concentric work only, force taken as constant over the stroke (brief §2), the whole body moved through the full stroke (an assumption).",
+  );
+  return {
+    id: "squats",
+    title: "Resistive squats",
+    energy,
+    peakLoad,
+    bout: { cycles: cycles.value as number, peakLoad: totalN },
+    boutInputs: [peakLoad, cycles],
+    details: [set, reps, stroke, applied, bodyWeight, total, cycles, wholeBody],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -338,26 +399,34 @@ export function cycleErgometer(person: Person, _env: Env, p: CycleParams = CYCLE
   requirePositiveFinite("durationS", p.durationS);
   requirePositiveFinite("displayedPowerW", p.displayedPowerW);
 
+  const duration = labelled("Duration", source(p.durationS, "s", "MANUAL", "Entered."));
+  const power = labelled("Displayed power", source(p.displayedPowerW, "W", "MANUAL", "As shown on the ergometer's display."));
   const workJ = ergometerWorkJ([
     { tS: 0, displayedPowerW: p.displayedPowerW },
     { tS: p.durationS, displayedPowerW: p.displayedPowerW },
   ]);
+  const energy = derive(
+    workJ,
+    "J",
+    "MODEL",
+    [duration, power],
+    "Displayed power corrected with the CEVIS dynamometer relation, P = 0.98 · displayed − 11.8 W (NASA/TP-2007-214760), integrated over the session. Same in every environment.",
+  );
   const met = metabolicRange(workJ);
-
-  const details: Detail[] = [
-    detail("Duration", p.durationS, "s", "MANUAL", "Entered."),
-    detail("Displayed power", p.displayedPowerW, "W", "MANUAL", "As shown on the ergometer's display."),
-    detail("Metabolic cost, lower bound", met.lowJ, "J", "ESTIMATE", `Work ÷ 0.25. ${met.basis}. A range, never a single figure.`),
-    detail("Metabolic cost, upper bound", met.highJ, "J", "ESTIMATE", `Work ÷ 0.20. ${met.basis}. A range, never a single figure.`),
-  ];
 
   return {
     id: "cycle",
     title: "Cycle ergometer",
-    energy: quantity(workJ, "J", "MODEL", "Displayed power corrected with the CEVIS dynamometer relation, P = 0.98 · displayed − 11.8 W (NASA/TP-2007-214760), integrated over the session. Same in every environment."),
-    peakLoad: quantity(null, "N", "MODEL", "No skeletal load term in this model: the ergometer's resistance is not modelled as a peak force through the skeleton."),
+    energy,
+    peakLoad: derive(null, "N", "MODEL", [], "No skeletal load term in this model: the ergometer's resistance is not modelled as a peak force through the skeleton."),
     bout: null,
-    details,
+    boutInputs: [],
+    details: [
+      duration,
+      power,
+      labelled("Metabolic cost, lower bound", derive(met.lowJ, "J", "ESTIMATE", [energy], `Work ÷ 0.25. ${met.basis}. A range, never a single figure.`)),
+      labelled("Metabolic cost, upper bound", derive(met.highJ, "J", "ESTIMATE", [energy], `Work ÷ 0.20. ${met.basis}. A range, never a single figure.`)),
+    ],
   };
 }
 
@@ -365,38 +434,54 @@ export function cycleErgometer(person: Person, _env: Env, p: CycleParams = CYCLE
 // Camera set
 // ---------------------------------------------------------------------------
 
+/**
+ * The tag of the camera pipeline as a formula step: ESTIMATE while the capture package says it has not been
+ * validated on real video, MEASURED once it has. Read from that package's constant, never duplicated.
+ */
+export function cameraPipelineTag(): Tag {
+  return VALIDATED_ON_REAL_VIDEO ? "MEASURED" : "ESTIMATE";
+}
+
 export interface CameraSetInput {
   id: string;
   title: string;
   reps: number;
   totalPositiveWorkJ: number;
   maxPeakForceN: number;
+  /** What the numbers rest on (scale, mass, gravity, device force), so the tags can follow. Built by the capture flow. */
+  inputs: readonly Quantity[];
   /** Shown on expand: scale, mass, environment, confidence, per-set flags. Built by the capture flow. */
   details: Detail[];
 }
 
 /**
- * A set measured from a camera or a video file. The energy and the peak load are MEASURED, with the capture
- * package's caveats in the notes. The set is a record of a real lift in the environment it was recorded in,
+ * A set measured from a camera or a video file. Energy and peak load are no more certain than the unvalidated
+ * pipeline and the scale (ESTIMATE). The set is a record of a real lift in the environment it was recorded in,
  * so it is the same in every environment of the selector: it is not re-scaled.
  */
 export function cameraSession(set: CameraSetInput): SessionResult {
+  const energy = derive(
+    set.totalPositiveWorkJ,
+    "J",
+    cameraPipelineTag(),
+    set.inputs,
+    "Positive work of the tracked wrist over the detected reps, from a camera or video file. Scale is the largest error. Not validated on real video.",
+  );
+  const peakLoad = derive(
+    set.maxPeakForceN,
+    "N",
+    cameraPipelineTag(),
+    set.inputs,
+    "Largest peak force over the reps, from second differences of the filtered wrist position. The noisiest output: indicative only. Not validated on real video.",
+  );
+  const cycles = derive(set.reps, "cycles", "EXACT", [energy], "One per detected rep.");
   return {
     id: set.id,
     title: set.title,
-    energy: quantity(
-      set.totalPositiveWorkJ,
-      "J",
-      "MEASURED",
-      "Positive work of the tracked wrist over the detected reps, from a camera or video file. Scale is the largest error. Not validated on real video.",
-    ),
-    peakLoad: quantity(
-      set.maxPeakForceN,
-      "N",
-      "MEASURED",
-      "Largest peak force over the reps, from second differences of the filtered wrist position. The noisiest output: indicative only. Not validated on real video.",
-    ),
+    energy,
+    peakLoad,
     bout: set.reps > 0 ? { cycles: set.reps, peakLoad: set.maxPeakForceN } : null,
+    boutInputs: set.reps > 0 ? [peakLoad, cycles] : [],
     details: set.details,
   };
 }
@@ -405,15 +490,17 @@ export function cameraSession(set: CameraSetInput): SessionResult {
 // Peak load in multiples of Earth body weight
 // ---------------------------------------------------------------------------
 
-/** A session's peak load as a multiple of the person's body weight on Earth (m · 9.81), with the peak load's own tag. */
+/** A session's peak load as a multiple of the person's body weight on Earth (m · 9.81), with the weakest tag of the peak load and the mass. */
 export function peakInBodyWeights(session: SessionResult, person: Person): Quantity {
   validatePerson(person);
   const unit = "× Earth body weight";
-  if (session.peakLoad.value === null) return quantity(null, unit, session.peakLoad.tag, session.peakLoad.note);
-  return quantity(
+  const mass = massOf(person);
+  if (session.peakLoad.value === null) return derive(null, unit, "EXACT", [session.peakLoad, mass], session.peakLoad.note);
+  return derive(
     session.peakLoad.value / (person.massKg * STANDARD_GRAVITY_MS2),
     unit,
-    session.peakLoad.tag,
+    "EXACT",
+    [session.peakLoad, mass],
     "Peak load divided by this person's body weight on Earth (m · 9.81 m/s²). Same source as the peak load.",
   );
 }

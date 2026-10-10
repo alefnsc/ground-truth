@@ -32,7 +32,7 @@ describe("a day on Earth", () => {
   it("sums the energy of its sessions", () => {
     const day = computeDay(person, ENVS.EARTH, [treadmill, squats, cycle]);
     expect(day.totalEnergy.value).toBeCloseTo(710678.304, 6);
-    expect(day.totalEnergy.tag).toBe("MODEL");
+    expect(day.totalEnergy.tag).toBe("ASSUMPTION"); // F2: was MODEL; the run and the squats rest on assumptions
   });
 });
 
@@ -143,18 +143,18 @@ describe("deficit over a mission", () => {
 });
 
 describe("a measured set in the day", () => {
-  const measured = cameraSession({ id: "camera-1", title: "Camera set", reps: 3, totalPositiveWorkJ: 147.15, maxPeakForceN: 127, details: [] });
+  const measured = cameraSession({ id: "camera-1", title: "Camera set", reps: 3, totalPositiveWorkJ: 147.15, maxPeakForceN: 127, inputs: [], details: [] });
 
   it("is the same in every environment, so it carries no gap by itself", () => {
     const iss = computeDay(person, ENVS.ISS, [{ kind: "camera", session: measured }]);
     expect(iss.stimulusRatio.value).toBe(1);
     expect(iss.totalEnergy.value).toBeCloseTo(147.15, 9);
-    expect(iss.totalEnergy.tag).toBe("MEASURED");
+    expect(iss.totalEnergy.tag).toBe("ESTIMATE"); // F2: was MEASURED
   });
 
-  it("mixing a measured set with a model takes the weaker tag for the total", () => {
+  it("mixing a camera set with a model takes the weaker tag for the total", () => {
     const day = computeDay(person, ENVS.EARTH, [{ kind: "camera", session: measured }, cycle]);
-    expect(day.totalEnergy.tag).toBe("MODEL");
+    expect(day.totalEnergy.tag).toBe("ESTIMATE"); // F2: was MODEL; the camera set is no better than ESTIMATE
     expect(day.totalEnergy.value).toBeCloseTo(365040 + 147.15, 6);
   });
 });

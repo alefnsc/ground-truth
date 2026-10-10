@@ -43,12 +43,12 @@ export function replace(el: Element, ...children: Child[]): void {
 }
 
 export const TAG_MEANING: Readonly<Record<Tag, string>> = {
-  MEASURED: "Measured from a camera or a video file. Not validated on real video.",
+  MEASURED: "Measured directly, for example the frame rate of a recording.",
   MANUAL: "Entered by the user, or a device setting.",
   MODEL: "A published formula with stated parameters.",
   ASSUMPTION: "A parameter this demo chose; not a published value.",
   CALIBRATED: "Fitted to one anchor point; not published.",
-  ESTIMATE: "A range or an estimate, never a single exact figure.",
+  ESTIMATE: "A range or an estimate, never a single exact figure. Also a number from the camera path, which has not been validated on real video.",
 };
 
 /** A provenance chip. The tag is its text, so colour is never the only signal. */

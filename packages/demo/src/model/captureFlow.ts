@@ -22,7 +22,7 @@ import {
   type RepResult,
 } from "@ground-truth/capture";
 import type { Confidence } from "@ground-truth/physics";
-import { cameraSession, quantity, type Detail, type Quantity, type SessionResult, type Tag } from "./scenarios";
+import { cameraPipelineTag, cameraSession, derive, labelled, source, type Detail, type Quantity, type SessionResult } from "./scenarios";
 
 // ---------------------------------------------------------------------------
 // State machine: idle -> calibrating -> ready -> recording -> analysed | refused
@@ -97,17 +97,18 @@ export function scaleFrom(method: ScaleMethod): ScaleOutcome {
       return {
         ok: true,
         metersPerUnit,
-        quantity: quantity(metersPerUnit, "m per frame height", "ESTIMATE", `From a known length of ${method.lengthM} m held at the wrist, the preferred method. ${SCALE_SENTENCE}`),
+        quantity: derive(metersPerUnit, "m per frame height", "ESTIMATE", [], `From a known length of ${method.lengthM} m held at the wrist, the preferred method. ${SCALE_SENTENCE}`),
       };
     }
     const metersPerUnit = metersPerUnitFromStature(method.statureM, method.eyeY, method.ankleY);
     return {
       ok: true,
       metersPerUnit,
-      quantity: quantity(
+      quantity: derive(
         metersPerUnit,
         "m per frame height",
         "ESTIMATE",
+        [],
         `From a stature of ${method.statureM} m and the eye and ankle in the frozen frame. Depth makes this method read high, by an estimated 5 to 10 %. ${SCALE_SENTENCE}`,
       ),
     };
@@ -169,10 +170,6 @@ function scaleNote(note: string | undefined): string {
   return text.includes(SCALE_SENTENCE) ? text : `${text} ${SCALE_SENTENCE}`;
 }
 
-function detail(label: string, value: number, unit: string, tag: Tag, note: string): Detail {
-  return { label, value, unit, tag, note };
-}
-
 /** Recorded frames and inputs in; a camera set, or a refusal with a sentence per reason and no numbers, out. */
 export function analyseRecording(frames: readonly PoseFrame[], inputs: CaptureInputs, label: { id: string; title: string }): CaptureOutcome {
   const result = analyzeSession(frames, {
@@ -194,22 +191,26 @@ export function analyseRecording(frames: readonly PoseFrame[], inputs: CaptureIn
   const fast = result.reps.filter((r) => r.filterLimited).length;
   const trimmed = result.reps.filter((r) => r.trimmedRangeFraction < 0.9).length;
 
+  const mass = labelled("Mass of the weight", source(inputs.massKg, "kg", "MANUAL", "Entered. The tracked wrist stands in for the weight."));
+  const gravity = labelled("Gravity", source(inputs.gEnvMs2, "m/s²", "MANUAL", "The environment the set was recorded in, chosen in the capture view."));
+  const device = labelled("Device force", source(inputs.deviceForceN, "N", "MANUAL", "A constant device force resisting the lift, entered; 0 for a free weight."));
+  const scale = labelled("Scale", derive(inputs.metersPerUnit as number, "m per frame height", "ESTIMATE", [], scaleNote(inputs.scaleNote)));
+  const pipeline = (value: number, unit: string, note: string): Quantity => derive(value, unit, cameraPipelineTag(), [scale], note);
+
   const details: Detail[] = [
-    detail("Mass of the weight", inputs.massKg, "kg", "MANUAL", "Entered. The tracked wrist stands in for the weight."),
-    detail("Gravity", inputs.gEnvMs2, "m/s²", "MANUAL", "The environment chosen in the capture view."),
-    detail("Device force", inputs.deviceForceN, "N", "MANUAL", "A constant device force resisting the lift, entered; 0 for a free weight."),
-    detail("Scale", inputs.metersPerUnit as number, "m per frame height", "ESTIMATE", scaleNote(inputs.scaleNote)),
-    detail("Frame rate", result.quality.rateHz, "Hz", "MEASURED", "Median rate of the frames the video delivered."),
-    detail("Frames lost", result.quality.lowVisibilityFraction * 100, "%", "MEASURED", "Frames in which the wrist was not visible."),
-    detail("Reps detected", reps.length, "reps", "MEASURED", `Confidence ${confidence}. ${CONFIDENCE_SENTENCE}`),
+    mass,
+    gravity,
+    device,
+    scale,
+    labelled("Frame rate", source(result.quality.rateHz, "Hz", "MEASURED", "Median rate of the frames the video delivered.")),
+    labelled("Frames lost", source(result.quality.lowVisibilityFraction * 100, "%", "MEASURED", "Frames in which the wrist was not visible.")),
+    labelled("Reps detected", pipeline(reps.length, "reps", `Confidence ${confidence}. ${CONFIDENCE_SENTENCE}`)),
   ];
   if (fast > 0) {
-    details.push(
-      detail("Reps too fast for the filter", fast, "reps", "MEASURED", `Shorter than ${FILTER_LIMITED_LIFT_S} s to lift: work and peak force are under-read for these reps.`),
-    );
+    details.push(labelled("Reps too fast for the filter", pipeline(fast, "reps", `Shorter than ${FILTER_LIMITED_LIFT_S} s to lift: work and peak force are under-read for these reps.`)));
   }
   if (trimmed > 0) {
-    details.push(detail("Reps measured over part of the movement", trimmed, "reps", "MEASURED", "Less than 90 % of the detected movement was measured: the rest was taken for rest, a pick-up or a set-down."));
+    details.push(labelled("Reps measured over part of the movement", pipeline(trimmed, "reps", "Less than 90 % of the detected movement was measured: the rest was taken for rest, a pick-up or a set-down.")));
   }
 
   return {
@@ -220,6 +221,7 @@ export function analyseRecording(frames: readonly PoseFrame[], inputs: CaptureIn
       reps: reps.length,
       totalPositiveWorkJ: result.totalPositiveWorkJ,
       maxPeakForceN: result.maxPeakForceN,
+      inputs: [scale, mass, gravity, device],
       details,
     }),
     reps,
