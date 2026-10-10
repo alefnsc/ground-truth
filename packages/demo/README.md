@@ -27,10 +27,14 @@ npm run typecheck --workspaces
 network with a self-signed certificate (`@vitejs/plugin-basic-ssl`), so the phone shows a certificate warning
 that you have to accept once. Open the "Network" address Vite prints.
 
-**Network.** The only requests the page makes are the pose library loading its model and its WASM files, the
-first time you open a camera or a video (three files: two WASM, one model of a few megabytes). No video frame,
-and nothing else, leaves the page; nothing is stored. The camera is released as soon as a recording stops, and
-when you leave the Capture tab.
+**Network.** Opening a camera or a video loads the pose library's runtime and model from two hosts:
+`cdn.jsdelivr.net` (two WASM files) and `storage.googleapis.com` (the model, a few megabytes). No video frame
+leaves the page and nothing is stored. The pose library (`@mediapipe/tasks-vision`) also tries to send usage
+metrics to Google (`odml.pa.googleapis.com`, a request every 60 s). Per the library's own privacy notice these are
+"metrics about the performance and utilization of the APIs", not the input data; the notice puts the duty to
+obtain consent for them on the integrator. **This page blocks that request** with a Content-Security-Policy in
+`index.html` that sets only `connect-src` to `'self'` and the two hosts above; `test/network.test.ts` pins the
+policy and the hosts. The camera is released as soon as a recording stops, and when you leave the Capture tab.
 
 ## What each view shows
 
@@ -156,3 +160,9 @@ What no one has exercised, so nothing here should be presented as working:
 - Playing a video file at half speed (the setting that lets the pose model keep up) on a slow device.
 - Releasing a live camera: the tracks are stopped when a recording stops and when the Capture tab is left, but only
   the video-file path of that code was run (its source was cleared on stop); no camera was opened.
+- The network behaviour beyond one browser session: the metrics request was seen blocked (a Content-Security-Policy
+  violation naming `odml.pa.googleapis.com` at 60 s) and the model and WASM still loaded and detection still ran,
+  watched for about 180 s in one Chromium-based pane with the Vite dev server. Not observed: the request without the
+  policy in this session, its payload on the wire (it was blocked; the content is as the library describes it),
+  other browsers (an older browser may not let `'self'` cover the dev server's WebSocket), and a built `dist/` served
+  by another host.

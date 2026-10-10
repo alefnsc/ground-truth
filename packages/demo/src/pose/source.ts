@@ -2,15 +2,18 @@
  * Camera or video file in, `{ tS, landmarks }` per video frame out. DOM and the pose library only:
  * the mapping to PoseFrame is in landmarks.ts, the arithmetic is nowhere in this file.
  *
- * Nothing here stores a frame or a video. The only network traffic is what the pose library does to
- * load its model and WASM files (the two URLs below).
+ * Nothing here stores a frame or a video. The page contacts two hosts, both for the pose library: the
+ * WASM runtime (cdn.jsdelivr.net) and the model (storage.googleapis.com), the two URLs below. The library
+ * also tries to post usage metrics to Google (odml.pa.googleapis.com, every 60 s; per its own privacy notice,
+ * "metrics about the performance and utilization of the APIs"). index.html blocks that with a
+ * Content-Security-Policy that sets connect-src to the two hosts and 'self'; test/network.test.ts pins both.
  */
 
 import { FilesetResolver, PoseLandmarker } from "@mediapipe/tasks-vision";
 import type { Landmark } from "./landmarks";
 
 /**
- * The pose model and the WASM runtime are fetched from these two URLs when the first recording starts.
+ * The pose model and the WASM runtime are fetched from these two URLs when a camera or a video file is opened.
  * AN OFFLINE BUILD MUST VENDOR BOTH: the model is a multi-megabyte binary and is deliberately not in this
  * repository. The WASM version below must equal the exact version of @mediapipe/tasks-vision in
  * packages/demo/package.json (pinned, no caret), so the JavaScript and the WASM it loads cannot drift apart.

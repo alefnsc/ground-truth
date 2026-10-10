@@ -104,6 +104,11 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
     "section",
     { class: "block", "aria-labelledby": "h-source" },
     h("h2", { id: "h-source" }, "Source"),
+    h(
+      "p",
+      { class: "note" },
+      "Opening a source loads the pose model from cdn.jsdelivr.net and storage.googleapis.com. No frame or video leaves this page. The pose library also tries to send usage metrics to Google; this page blocks that with a Content-Security-Policy.",
+    ),
     h("div", { class: "button-row" }, cameraButton, fileLabel),
     status,
     timingWarning,
@@ -425,7 +430,7 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
     // The camera is released as soon as recording stops: the tracks are stopped, and nothing was stored.
     closeSource();
     stage.hidden = true;
-    say(`Recording stopped. ${s.frames.length} frames analysed on this page; nothing was uploaded or saved.`);
+    say(`Recording stopped. ${s.frames.length} frames analysed on this page; no frame or video was uploaded or saved.`);
     go(outcome.kind === "analysed" ? "analysed" : "refused");
   }
   stopButton.addEventListener("click", finishRecording);
