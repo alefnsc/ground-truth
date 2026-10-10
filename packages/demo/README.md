@@ -27,14 +27,19 @@ npm run typecheck --workspaces
 network with a self-signed certificate (`@vitejs/plugin-basic-ssl`), so the phone shows a certificate warning
 that you have to accept once. Open the "Network" address Vite prints.
 
-**Network.** Opening a camera or a video loads the pose library's runtime and model from two hosts:
-`cdn.jsdelivr.net` (two WASM files) and `storage.googleapis.com` (the model, a few megabytes). No video frame
-leaves the page and nothing is stored. The pose library (`@mediapipe/tasks-vision`) also tries to send usage
-metrics to Google (`odml.pa.googleapis.com`, a request every 60 s). Per the library's own privacy notice these are
-"metrics about the performance and utilization of the APIs", not the input data; the notice puts the duty to
-obtain consent for them on the integrator. **This page blocks that request** with a Content-Security-Policy in
-`index.html` that sets only `connect-src` to `'self'` and the two hosts above; `test/network.test.ts` pins the
-policy and the hosts. The camera is released as soon as a recording stops, and when you leave the Capture tab.
+**Network.** After `npm install` the page contacts no third-party host. The pose model is committed
+(`public/models/pose_landmarker_lite.task`, 5,777,746 bytes, SHA-256 `59929e1d…690d574a`, checked against
+`pose_landmarker_lite.task.sha256` by `scripts/verify-model.mjs` before every `dev` and `build`; licence and source in
+[`public/models/NOTICE.md`](public/models/NOTICE.md)). The WASM runtime is copied from the pinned
+`@mediapipe/tasks-vision` package into `public/mediapipe/wasm` by `scripts/copy-wasm.mjs` before `dev` and `build`; the
+copy is git-ignored, which is why `dist/` is about 45 MB. No video frame leaves the page and nothing is stored.
+The pose library also tries to send usage metrics to Google (`odml.pa.googleapis.com`, a request every 60 s). Per the
+library's own privacy notice these are "metrics about the performance and utilization of the APIs", not the input data;
+the notice puts the duty to obtain consent for them on the integrator. **This page blocks that request** with a
+Content-Security-Policy in `index.html` that sets only `connect-src 'self'`; `test/network.test.ts` pins the policy and
+the absence of any host in the source. **After about 60 s, DevTools shows a Content-Security-Policy violation naming
+`odml.pa.googleapis.com`: that is the evidence of the block, not a bug.** The camera is released as soon as a recording
+stops, and when you leave the Capture tab.
 
 ## What each view shows
 
@@ -163,14 +168,14 @@ an `ESTIMATE`, always shown as a range in joules, never as one figure and never 
 - A camera set's peak is the force on the weight, not through the skeleton, and excludes body weight.
 - The stress at the bone is taken as proportional to the force (the physics package's assumption for cycles to match).
 
-## Offline use
+## Model licence and intended use
 
-The pose model and the WASM runtime load from two URLs, the constants `POSE_MODEL_URL` and `POSE_WASM_BASE` at
-the top of `src/pose/source.ts`. An offline build must vendor both: the model is a multi-megabyte binary, so it
-is deliberately not in this repository. The WASM version in the URL must equal the version of
-`@mediapipe/tasks-vision` in `package.json`, which is pinned (1.1.0, Apache-2.0). The remote model file is fetched
-by the library itself, and this page checks no integrity hash; its licence
-is not recorded here: check the model's terms before redistributing it.
+The model is the MediaPipe Pose Landmarker "lite" bundle. Its model card (BlazePose GHUM 3D, April 16, 2021) states
+that it is "Licensed under Apache License, Version 2.0"; the full notice, the card's intended and out-of-scope uses
+(one person, within about 4 m, head visible; no metric depth; not for surveillance) and its statement that the model
+is not intended for human life-critical decisions and its primary intended application is entertainment are in
+[`public/models/NOTICE.md`](public/models/NOTICE.md). This demo uses one person, side-on, and only the 2D vertical
+position of one wrist; it is load accounting, not a clinical measurement.
 
 ## Before trusting a camera number
 
@@ -196,10 +201,17 @@ What no one has exercised, so nothing here should be presented as working:
   the video-file path of that code was run (its source was cleared on stop); no camera was opened.
 - The network behaviour beyond one browser session: the metrics request was seen blocked (a Content-Security-Policy
   violation naming `odml.pa.googleapis.com` at 60 s) and the model and WASM still loaded and detection still ran,
-  watched for about 180 s in one Chromium-based pane with the Vite dev server. Not observed: the request without the
-  policy in this session, its payload on the wire (it was blocked; the content is as the library describes it),
-  other browsers (an older browser may not let `'self'` cover the dev server's WebSocket), and a built `dist/` served
-  by another host.
+  watched for about 180 s in one Chromium-based pane with the Vite dev server, then again with the model and WASM served
+  from this origin (expected requests: only the model and WASM from localhost, and the blocked metrics attempt at 60 s;
+  detection ran 90 times after the block). Not observed: the request without the policy in this session, its payload on
+  the wire (it was blocked; the content is as the library describes it), and other browsers (an older browser may not let
+  `'self'` cover the dev server's WebSocket).
+- Built output (`vite preview`): the model and WASM loaded from localhost and no external request or CSP violation
+  appeared in about 20 s, but the 60 s metrics attempt was not re-observed there, and detection could not be observed
+  there (the browser pane reported its page as hidden, so no video frame callbacks fired and the recording had 0 frames).
+- "Works with no network" is inferred from the absence of external requests, not observed: the machine was not
+  disconnected from the network.
+- A clean checkout: `npm install` then `npm run build` was run in this working copy, not in a fresh clone.
 - The fallback timing branch (a browser without `requestVideoFrameCallback`, where recording is refused with a
   sentence) was never run.
 - Frozen-frame tapping, the marker lines, and the stature method (eye and ankle read from a real pose) were never tried
