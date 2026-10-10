@@ -67,7 +67,7 @@ SAY: This is one ordinary day on Earth: a run, a set of squats, and a ride on a 
 The model gives the day 711 kJ of energy and a load of 100%.
 Energy here is mechanical work. It is not calories.
 Load is a daily stimulus, as a percentage of the same day on Earth. It is load accounting. It is not a measurement of bone.
-On Earth, gravity makes the two numbers move together.
+The argument of this project is that on Earth gravity ties the two numbers together.
 
 IF IT GOES WRONG: if the page shows other numbers than the table, a default has changed and the pin test will have failed.
 Stop and regenerate before presenting.
@@ -76,11 +76,12 @@ Stop and regenerate before presenting.
 
 SHOW: click ISS. Then point at the line under the Load number that begins "Rests on:".
 
-SAY: Same day, on the ISS. In this model the day's energy goes from 711 kJ to 603 kJ, a change of −15.2%.
-The load goes to 25.1% of the Earth day.
-So in this model energy fell by 15.2% and load fell to 25.1%. The two numbers do not move together any more.
+SAY: Same day, on the ISS. In this model the day's energy goes from 711 kJ to 603 kJ, a change of −15.2%: about a seventh.
+The load goes to 25.1% of the Earth day: a fall of about three quarters.
+So in this model the energy changed by about a seventh and the load by about three quarters. The two numbers do not move together.
 Why, from the model: the run's peak load is the Earth peak reduced by a measured on-orbit decrement for running,
-75% (Genc 2010, from the brief). The squats lose the body-weight term: 1769 N on Earth, 1000 N on the ISS.
+75% (Genc 2010, from the brief). The Earth peak itself, 2.5 body weights, is an assumption.
+The squats lose the body-weight term: 1769 N on Earth, 1000 N on the ISS.
 Read the "Rests on:" line aloud. It lists what the Load number depends on.
 
 IF IT GOES WRONG: do not say that energy barely moves. The brief's old script says so; the model gives −15.2%.
@@ -91,11 +92,12 @@ SHOW: untick "Include in today" on the run and the squats, so only the cycle erg
 
 SAY: Take the cycle ergometer alone. Its energy is 365 kJ on Earth and 365 kJ on the ISS. It is the same in every environment.
 The model gives it no skeletal load term, so Load shows a dash and says why. That is a modelling choice.
-The brief's reason is that pedalling puts almost no peak load through the hip.
+The brief's reason is that such a session gives approximately zero femoral loading.
 The model uses the CEVIS dynamometer correction, though the brief names FERGO.
 Now the run alone. On the ISS its energy goes from 314 kJ to 220 kJ, a change of −30.0%, and its load goes from 100% to 25.0%.
 Squats alone: energy from 31.8 kJ to 18.0 kJ, a change of −43.5%, load 56.5%.
-The point: joules and load are different quantities. The same joules can come with very different load, or with none.
+The point: joules and load are different quantities.
+314 kJ of running on Earth carries a peak load of 1923 N. 365 kJ of cycling carries no load term.
 
 IF IT GOES WRONG: if asked whether the ergometer "loads the bone", say that the model does not give it a load term and that is a modelling choice.
 
@@ -103,9 +105,9 @@ IF IT GOES WRONG: if asked whether the ergometer "loads the bone", say that the 
 
 SHOW: the Mission horizon slider; the button for 180 days, then the button for 1095 days.
 
-SAY: Repeat this day, every day, on the ISS. At 180 days, the length of an ISS increment (from the brief),
-135 of 180 Earth-days of loading are missing in this model.
-At 1095 days, the length of a Mars round trip (from the brief), 820 of 1095.
+SAY: Repeat this day, every day, on the ISS, with no adaptation or recovery modelled.
+At 180 days, the length of an ISS increment (from the brief), 135 of 180 Earth-days of loading are missing in this model.
+At 1095 days, three years, the top of the brief's range of 2.5 to 3 years for a Mars round trip, 820 of 1095.
 That 1095-day figure is for free-fall conditions, not for Mars gravity.
 It is one number for the whole skeleton. Per-compartment behaviour, trabecular against cortical, is not modelled.
 This is load accounting. It is not a prediction.
@@ -135,8 +137,8 @@ The next step in the brief's section 9 is TRISH EXPAND, opened to outside resear
 ## Moon and Mars
 
 Their run peak is an assumption: 2.5× the effective weight, no harness. The ISS row uses a measured decrement.
-Do not compare those rows with the ISS row. The on-screen note says the same. If the Moon or Mars is shown, the day's load
-reads 17.1% and 37.9%, and read the note first.
+Do not compare those rows with the ISS row. The on-screen note says the same.
+If you show the Moon or Mars, the day's load reads 17.1% and 37.9%. Read the on-screen note first.
 
 ## Do not say
 
