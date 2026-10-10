@@ -123,6 +123,9 @@ export function mountCurrencies(root: HTMLElement): CurrenciesView {
     }
     if (focus) button.focus();
     update();
+    if (lastDay) {
+      replace(announcer, `${button.querySelector(".env-name")?.textContent ?? ""}: energy ${formatEnergy(lastDay.totalEnergy.value)}, load ${formatPercent(lastDay.stimulusRatio.value)} of the same day on Earth.`);
+    }
   }
 
   radioButtons.forEach((button, at) => {
@@ -148,9 +151,10 @@ export function mountCurrencies(root: HTMLElement): CurrenciesView {
     max: number;
     step: number;
     value: number;
+    whole?: boolean;
     onValid: (value: number) => void;
   }): HTMLElement {
-    const error = h("span", { class: "field-error", id: `${opts.id}-error`, hidden: true }, `Enter a number from ${opts.min} to ${opts.max} ${opts.unit}.`.trim());
+    const error = h("span", { class: "field-error", id: `${opts.id}-error`, hidden: true }, `Enter ${opts.whole ? "a whole number" : "a number"} from ${opts.min} to ${opts.max} ${opts.unit}.`.trim());
     const input = h("input", {
       id: opts.id,
       type: "number",
@@ -163,7 +167,7 @@ export function mountCurrencies(root: HTMLElement): CurrenciesView {
     });
     input.addEventListener("input", () => {
       const v = input.valueAsNumber;
-      const ok = Number.isFinite(v) && v >= opts.min && v <= opts.max;
+      const ok = Number.isFinite(v) && v >= opts.min && v <= opts.max && (!opts.whole || Number.isInteger(v));
       input.setAttribute("aria-invalid", String(!ok));
       error.hidden = ok;
       if (ok) opts.onValid(v);
@@ -193,6 +197,10 @@ export function mountCurrencies(root: HTMLElement): CurrenciesView {
   const loadChip = h("span", { class: "chip-slot" });
   const loadNote = h("p", { class: "note" });
 
+  // Announced only when the environment changes, not on every keystroke in a field.
+  const announcer = h("p", { class: "sr-only", role: "status", "aria-live": "polite" });
+  let lastDay: DayResult | null = null;
+
   const restsOn = h("p", { class: "note rests-on" }, LOAD_RESTS_ON);
   const caveat = h("p", { class: "caveat", hidden: true });
 
@@ -207,9 +215,10 @@ export function mountCurrencies(root: HTMLElement): CurrenciesView {
     "section",
     { class: "block", "aria-labelledby": "h-numbers" },
     h("h2", { id: "h-numbers" }, "Today"),
+    announcer,
     h(
       "div",
-      { class: "numbers", "aria-live": "polite" },
+      { class: "numbers" },
       h(
         "div",
         { class: "big" },
@@ -256,6 +265,7 @@ export function mountCurrencies(root: HTMLElement): CurrenciesView {
       max: field.max,
       step: field.step,
       value: bag[field.key] as number,
+      ...(field.whole ? { whole: true } : {}),
       onValid: (v) => {
         bag[field.key] = v;
         update();
@@ -361,8 +371,8 @@ export function mountCurrencies(root: HTMLElement): CurrenciesView {
       ),
       horizonOut,
     ),
-    h("div", { class: "big", "aria-live": "polite" }, h("h3", null, "Loading missing"), deficitValue, deficitChip, deficitNote, deficitRaw),
-    h("div", { class: "big", "aria-live": "polite" }, h("h3", null, "Cycles to match"), cyclesLine, cyclesChip, cyclesNote),
+    h("div", { class: "big" }, h("h3", null, "Loading missing"), deficitValue, deficitChip, deficitNote, deficitRaw),
+    h("div", { class: "big" }, h("h3", null, "Cycles to match"), cyclesLine, cyclesChip, cyclesNote),
     h("p", { class: "explain" }, "The deficit is one number for the whole skeleton. Per-compartment divergence (trabecular against cortical) is not modelled."),
   );
 
@@ -435,7 +445,8 @@ export function mountCurrencies(root: HTMLElement): CurrenciesView {
     const text = partialGravityCaveat(state.body);
     caveat.hidden = text === null;
     replace(caveat, text ?? "");
-    renderDay(computeDay(person(), env(), includedSpecs()));
+    lastDay = computeDay(person(), env(), includedSpecs());
+    renderDay(lastDay);
     renderCards();
   }
 

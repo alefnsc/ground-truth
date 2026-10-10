@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PoseFrame, RepResult } from "@ground-truth/capture";
-import { syntheticSession } from "../../capture/test/helpers";
+import { legSession, syntheticSession } from "../../capture/test/helpers";
 import {
   CONFIDENCE_SENTENCE,
   SCALE_SENTENCE,
@@ -9,6 +9,7 @@ import {
   createGate,
   timingProblem,
   knownLengthReady,
+  parseDeviceForce,
   refusalSentences,
   repNotes,
   scaleFrom,
@@ -111,6 +112,7 @@ describe("inputs", () => {
     expect(captureInputProblem({ ...earth, massKg: 0 })).toMatch(/mass/i);
     expect(captureInputProblem({ ...earth, massKg: Number.NaN })).toMatch(/mass/i);
     expect(captureInputProblem({ ...earth, deviceForceN: -5 })).toMatch(/force/i);
+    expect(captureInputProblem({ ...earth, deviceForceN: Number.NaN })).toMatch(/not a number/i);
     expect(captureInputProblem({ ...earth, gEnvMs2: -1 })).toMatch(/gravity/i);
   });
 });
@@ -243,8 +245,9 @@ describe("a recording that is refused", () => {
       expect(r.sentence).not.toMatch(/[A-Z]+_[A-Z]+/); // no raw reason code in the sentence
     }
     expect(outcome.reasons.map((r) => r.code)).toContain("LANDMARK_LOST");
-    expect(JSON.stringify(outcome)).not.toMatch(/positiveWork|peakForce|"session"/);
-    expect("session" in outcome).toBe(false);
+    // M13: assert the exact shape, not a case-sensitive regex over the JSON: a refusal has these keys and no others
+    expect(Object.keys(outcome).sort()).toEqual(["kind", "reasons"]);
+    for (const r of outcome.reasons) expect(Object.keys(r).sort()).toEqual(["code", "sentence"]);
   });
 
   it("no scale is its own reason", () => {
@@ -332,5 +335,40 @@ describe("timestamps", () => {
     const sentence = timingProblem(false);
     expect(sentence).toMatch(/capture timestamps/i);
     expect(sentence?.length).toBeGreaterThan(30);
+  });
+});
+
+describe("the device force field (M5)", () => {
+  it("empty means none, a number is itself, and unparseable input is NaN, never silently 0", () => {
+    expect(parseDeviceForce("", false)).toBe(0);
+    expect(parseDeviceForce("  ", false)).toBe(0);
+    expect(parseDeviceForce("1000", false)).toBe(1000);
+    expect(parseDeviceForce("12.5", false)).toBe(12.5);
+    expect(parseDeviceForce("", true)).toBeNaN(); // the browser's badInput: an empty value that is not empty
+    expect(parseDeviceForce("1e", false)).toBeNaN();
+  });
+});
+
+describe("the camera set's bout uses the largest peak force (M13)", () => {
+  // Two reps of 0.5 m: one lifted in 1.0 s, one in 1.6 s. Hand: a_peak = (10 / √3) h / T², so F = 10 (9.81 + a_peak):
+  //   T = 1.0 s: a = 5.7735 × 0.5 / 1.00 = 2.887 m/s², F = 126.97 N
+  //   T = 1.6 s: a = 5.7735 × 0.5 / 2.56 = 1.128 m/s², F = 109.38 N
+  const fast: [number, number][] = [[1, 0], [1, 0.5], [1, 0], [1, 0]];
+  const slow: [number, number][] = [[1.6, 0.5], [1.6, 0], [1, 0]];
+  const run = (legs: [number, number][]) => analyseRecording(legSession({ legs, metersPerUnit: 2.5 }), earth, label);
+
+  it.each([
+    ["fast first", [...fast, ...slow]],
+    ["fast last", [[1, 0], ...slow, [1, 0], ...fast.slice(1)] as [number, number][]],
+  ])("%s: peak load and the bout are the maximum over the reps, and the reps differ", (_name, legs) => {
+    const o = run(legs as [number, number][]);
+    if (o.kind !== "analysed") throw new Error("expected analysed");
+    const peaks = o.reps.map((r) => r.rep.peakForceN);
+    expect(o.reps).toHaveLength(2);
+    expect(Math.min(...peaks)).toBeLessThan(Math.max(...peaks) - 10); // 127 against 109: a first-or-last rule would be wrong
+    expect(o.session.peakLoad.value).toBe(Math.max(...peaks));
+    expect(o.session.bout?.peakLoad).toBe(Math.max(...peaks));
+    expect(o.session.bout?.peakLoad).toBeGreaterThan(120);
+    expect(o.session.energy.value).toBeCloseTo(o.reps.reduce((sum, r) => sum + r.rep.positiveWorkJ, 0), 9);
   });
 });

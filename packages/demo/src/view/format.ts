@@ -7,8 +7,11 @@ import type { Quantity } from "../model/scenarios";
 
 export const DASH = "—";
 
+/** A narrow no-break space. A comma would read as a decimal point to a comma-decimal reader ("1,923 N" as 1.9 N). */
+const GROUP_SEPARATOR = "\u202f";
+
 function group(integerDigits: string): string {
-  return integerDigits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return integerDigits.replace(/\B(?=(\d{3})+(?!\d))/g, GROUP_SEPARATOR);
 }
 
 /** About three significant figures without an exponent: no decimals from 100 up, one from 10, two below. Zero is "0". */

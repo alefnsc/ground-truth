@@ -106,7 +106,7 @@ export function computeDay(person: Person, env: Env, specs: readonly SessionSpec
       "J",
       "EXACT",
       energies,
-      `Mechanical work summed over the sessions${skipped > 0 ? ` that can be computed here (${skipped} cannot)` : ""}. Tag: the least certain of the energies summed. Mechanical work, not metabolic energy.`,
+      `Summed over the sessions${skipped > 0 ? ` that can be computed here (${skipped} cannot)` : ""}. Tag: the least certain of the energies summed.`,
     );
   }
 
@@ -124,7 +124,7 @@ export function computeDay(person: Person, env: Env, specs: readonly SessionSpec
       "× Earth",
       "EXACT",
       [stimulus, earthStimulus],
-      "Daily load stimulus as a fraction of the same day of sessions on Earth, same person. Tag: the least certain of the two stimuli. Load accounting, not a measurement or prediction of bone.",
+      "Same person, same sessions, against the day on Earth. Tag: the least certain of the two stimuli.",
     );
   }
 

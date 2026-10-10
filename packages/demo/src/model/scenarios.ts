@@ -180,7 +180,7 @@ export const CYCLE_DEFAULTS: Readonly<CycleParams> = {
 export type PresetKind = "treadmill" | "squats" | "cycle";
 
 export type ParamField =
-  | { kind: "number"; key: string; label: string; unit: string; min: number; max: number; step: number }
+  | { kind: "number"; key: string; label: string; unit: string; min: number; max: number; step: number; whole?: true }
   | { kind: "boolean"; key: string; label: string };
 
 /** What a view may edit, and within which limits. Data only. */
@@ -194,8 +194,8 @@ export const PARAM_FIELDS: Readonly<Record<PresetKind, readonly ParamField[]>> =
   ],
   squats: [
     { kind: "number", key: "deviceForceN", label: "Device force", unit: "N", min: 0, max: 5000, step: 50 },
-    { kind: "number", key: "sets", label: "Sets", unit: "", min: 1, max: 10, step: 1 },
-    { kind: "number", key: "repsPerSet", label: "Reps per set", unit: "", min: 1, max: 30, step: 1 },
+    { kind: "number", key: "sets", label: "Sets", unit: "", min: 1, max: 10, step: 1, whole: true },
+    { kind: "number", key: "repsPerSet", label: "Reps per set", unit: "", min: 1, max: 30, step: 1, whole: true },
     { kind: "number", key: "strokeM", label: "Stroke", unit: "m", min: 0.1, max: 1, step: 0.05 },
     { kind: "boolean", key: "replaceBodyWeight", label: "Add the body weight the environment lacks" },
   ],
@@ -211,6 +211,10 @@ export const PARAM_FIELDS: Readonly<Record<PresetKind, readonly ParamField[]>> =
 
 function requirePositiveFinite(name: string, value: number): void {
   if (!Number.isFinite(value) || value <= 0) throw new RangeError(`${name} must be a finite number > 0, got ${value}`);
+}
+
+function requireWholeNumber(name: string, value: number): void {
+  if (!Number.isInteger(value) || value < 1) throw new RangeError(`${name} must be a whole number >= 1, got ${value}`);
 }
 
 export function validatePerson(person: Person): void {
@@ -345,8 +349,8 @@ export function treadmillRun(person: Person, env: Env, p: TreadmillParams = TREA
 export function resistiveSquats(person: Person, env: Env, p: SquatParams = SQUAT_DEFAULTS): SessionResult {
   validatePerson(person);
   if (!Number.isFinite(p.deviceForceN) || p.deviceForceN < 0) throw new RangeError(`deviceForceN must be a finite number >= 0, got ${p.deviceForceN}`);
-  requirePositiveFinite("sets", p.sets);
-  requirePositiveFinite("repsPerSet", p.repsPerSet);
+  requireWholeNumber("sets", p.sets);
+  requireWholeNumber("repsPerSet", p.repsPerSet);
   requirePositiveFinite("strokeM", p.strokeM);
 
   const mass = massOf(person);

@@ -15,6 +15,7 @@ import {
   createGate,
   timingProblem,
   knownLengthReady,
+  parseDeviceForce,
   statureReady,
   refusalSentences,
   scaleFrom,
@@ -192,7 +193,7 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
     { class: "block", "aria-labelledby": "h-load", hidden: true },
     h("h2", { id: "h-load" }, "Load"),
     h("div", { class: "field" }, h("label", { for: "cap-mass" }, "Mass of the weight", h("span", { class: "unit" }, " (kg)")), massInput),
-    h("div", { class: "field" }, h("label", { for: "cap-env" }, "Environment"), envSelect),
+    h("div", { class: "field" }, h("label", { for: "cap-env" }, "Where this was recorded"), envSelect, h("p", { class: "note" }, "Choose where the lift happened. Choosing another environment for a video filmed on Earth gives a wrong number."), ),
     h("div", { class: "field" }, h("label", { for: "cap-force" }, "Constant device force, optional", h("span", { class: "unit" }, " (N)")), forceInput),
     loadProblem,
   );
@@ -455,7 +456,7 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
   // ---- behaviour: record -----------------------------------------------------------------------
 
   function inputs() {
-    const force = forceInput.value.trim() === "" ? 0 : forceInput.valueAsNumber;
+    const force = parseDeviceForce(forceInput.value, forceInput.validity.badInput);
     return {
       massKg: massInput.valueAsNumber,
       gEnvMs2: ENVS[envSelect.value as keyof typeof ENVS].gEnvMs2,

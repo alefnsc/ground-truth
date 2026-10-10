@@ -180,8 +180,15 @@ export interface CaptureInputs {
 export function captureInputProblem(inputs: CaptureInputs): string | null {
   if (!Number.isFinite(inputs.massKg) || inputs.massKg <= 0) return "Enter the mass of the weight, above 0 kg.";
   if (!Number.isFinite(inputs.gEnvMs2) || inputs.gEnvMs2 < 0) return "The gravity of the environment must be 0 or more.";
+  if (Number.isNaN(inputs.deviceForceN)) return "The device force is not a number: leave it empty for none, or enter newtons.";
   if (!Number.isFinite(inputs.deviceForceN) || inputs.deviceForceN < 0) return "A device force must be 0 N or more.";
   return null;
+}
+
+/** The optional device-force field: empty is none (0); anything the field cannot parse is NaN, never silently 0. */
+export function parseDeviceForce(raw: string, badInput: boolean): number {
+  if (badInput) return Number.NaN;
+  return raw.trim() === "" ? 0 : Number(raw);
 }
 
 export interface RepRow {

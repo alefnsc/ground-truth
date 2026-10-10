@@ -323,3 +323,11 @@ describe("peak load in body weights", () => {
     expect(none.note).toMatch(/no skeletal load term/i);
   });
 });
+
+describe("sets and reps are whole numbers (M6)", () => {
+  it("a squat set of 2.5 sets or 12.5 reps is refused", () => {
+    expect(() => resistiveSquats(person, ENVS.EARTH, { ...SQUAT_DEFAULTS, sets: 2.5 })).toThrow(RangeError);
+    expect(() => resistiveSquats(person, ENVS.EARTH, { ...SQUAT_DEFAULTS, repsPerSet: 12.5 })).toThrow(RangeError);
+    expect(resistiveSquats(person, ENVS.EARTH, { ...SQUAT_DEFAULTS, sets: 2, repsPerSet: 10 }).bout?.cycles).toBe(20);
+  });
+});

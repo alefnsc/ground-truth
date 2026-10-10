@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { DASH, formatDays, formatLength, formatSeconds, formatEnergy, formatForce, formatMultiple, formatPercent, formatQuantity } from "../src/view/format";
 
+/*
+ * M2: thousands are grouped with a narrow no-break space (U+202F), never a comma, which a comma-decimal reader takes for a
+ * decimal point ("1,923 N" read as 1.9 N). Every grouped expectation below was edited from a comma.
+ */
+describe("grouping", () => {
+  it("uses U+202F, never a comma, in every formatter", () => {
+    for (const text of [formatEnergy(1825200), formatForce(1923.4), formatMultiple(1345), formatDays(11032852), formatQuantity({ value: 5100, unit: "steps", tag: "MODEL", note: "n" })]) {
+      expect(text).toContain("\u202f");
+      expect(text).not.toContain(",");
+    }
+  });
+});
+
 describe("formatEnergy", () => {
   it("null is a dash", () => {
     expect(formatEnergy(null)).toBe(DASH);
@@ -10,7 +23,7 @@ describe("formatEnergy", () => {
     expect(formatEnergy(31843.872)).toBe("31.8 kJ");
     expect(formatEnergy(365040)).toBe("365 kJ");
     expect(formatEnergy(710678.304)).toBe("711 kJ");
-    expect(formatEnergy(1825200)).toBe("1,825 kJ");
+    expect(formatEnergy(1825200)).toBe("1\u202f825 kJ");
     expect(formatEnergy(1000)).toBe("1.00 kJ");
   });
   it("joules below that", () => {
@@ -26,7 +39,7 @@ describe("formatEnergy", () => {
 describe("formatForce", () => {
   it("null is a dash", () => expect(formatForce(null)).toBe(DASH));
   it("three significant figures, thousands grouped", () => {
-    expect(formatForce(1769.104)).toBe("1,769 N");
+    expect(formatForce(1769.104)).toBe("1\u202f769 N");
     expect(formatForce(480.69)).toBe("481 N");
     expect(formatForce(38.24)).toBe("38.2 N");
     expect(formatForce(5.1)).toBe("5.10 N");
@@ -55,14 +68,14 @@ describe("formatMultiple", () => {
     expect(formatMultiple(9.7952)).toBe("9.80×");
     expect(formatMultiple(2.5)).toBe("2.50×");
     expect(formatMultiple(12.34)).toBe("12.3×");
-    expect(formatMultiple(1234.5)).toBe("1,235×");
+    expect(formatMultiple(1234.5)).toBe("1\u202f235×");
   });
 });
 
 describe("formatDays", () => {
   it("null is a dash, otherwise a grouped whole number", () => {
     expect(formatDays(null)).toBe(DASH);
-    expect(formatDays(1844564.4)).toBe("1,844,564");
+    expect(formatDays(1844564.4)).toBe("1\u202f844\u202f564");
     expect(formatDays(0)).toBe("0");
   });
 });
@@ -74,11 +87,11 @@ describe("formatQuantity", () => {
   });
   it("joules and newtons use their formatters", () => {
     expect(formatQuantity({ ...base, value: 365040, unit: "J" })).toBe("365 kJ");
-    expect(formatQuantity({ ...base, value: 1769.104, unit: "N" })).toBe("1,769 N");
+    expect(formatQuantity({ ...base, value: 1769.104, unit: "N" })).toBe("1\u202f769 N");
   });
   it("other units follow the number", () => {
     expect(formatQuantity({ ...base, value: 1.7579, unit: "m/s" })).toBe("1.76 m/s");
-    expect(formatQuantity({ ...base, value: 5100, unit: "steps" })).toBe("5,100 steps");
+    expect(formatQuantity({ ...base, value: 5100, unit: "steps" })).toBe("5\u202f100 steps");
     expect(formatQuantity({ ...base, value: 0.08, unit: "m" })).toBe("0.08 m");
   });
   it("a multiple unit puts the sign after the number", () => {
@@ -86,7 +99,7 @@ describe("formatQuantity", () => {
   });
   it("a unit-less count has no trailing space, and a whole number has no decimals", () => {
     expect(formatQuantity({ ...base, value: 3, unit: "" })).toBe("3");
-    expect(formatQuantity({ ...base, value: 1800, unit: "s" })).toBe("1,800 s");
+    expect(formatQuantity({ ...base, value: 1800, unit: "s" })).toBe("1\u202f800 s");
   });
   it("never prints a negative zero", () => {
     expect(formatQuantity({ ...base, value: -0, unit: "m" })).toBe("0 m");
