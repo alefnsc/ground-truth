@@ -187,6 +187,9 @@ export type ParamField =
   | { kind: "boolean"; key: string; label: string };
 
 /** What a view may edit, and within which limits. Data only. */
+/** The range of a constant device force, newtons: the squat device here and the device force of a camera set. */
+export const DEVICE_FORCE_LIMITS_N = { min: 0, max: 5000 } as const;
+
 export const PARAM_FIELDS: Readonly<Record<PresetKind, readonly ParamField[]>> = {
   treadmill: [
     { kind: "number", key: "durationS", label: "Duration", unit: "s", min: 60, max: 7200, step: 60 },
@@ -196,7 +199,7 @@ export const PARAM_FIELDS: Readonly<Record<PresetKind, readonly ParamField[]>> =
     { kind: "number", key: "supportFraction", label: "Harness load (ISS only)", unit: "× 1 g body weight", min: 0, max: 1, step: 0.05 },
   ],
   squats: [
-    { kind: "number", key: "deviceForceN", label: "Device force", unit: "N", min: 0, max: 5000, step: 50 },
+    { kind: "number", key: "deviceForceN", label: "Device force", unit: "N", ...DEVICE_FORCE_LIMITS_N, step: 50 },
     { kind: "number", key: "sets", label: "Sets", unit: "", min: 1, max: 10, step: 1, whole: true },
     { kind: "number", key: "repsPerSet", label: "Reps per set", unit: "", min: 1, max: 30, step: 1, whole: true },
     { kind: "number", key: "strokeM", label: "Stroke", unit: "m", min: 0.1, max: 1, step: 0.05 },

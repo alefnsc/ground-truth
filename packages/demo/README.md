@@ -58,7 +58,8 @@ stimulus, which no amount of added volume achieves.
 
 **Capture.** A protocol card, then a camera or a video file, a scale (a known length held at the wrist, which is
 preferred, or the stature method), the mass of the weight, the environment and an optional constant device
-force, and Record / Stop. The result is either the reasons the recording was refused, in plain sentences and
+force, and Record / Stop. A length outside 0.05 to 3 m, a height outside 1 to 2.5 m, a mass outside 0.1 to 500 kg or
+a device force above 5000 N is refused with a sentence naming the unit, so a height typed as 175 gives no scale. The result is either the reasons the recording was refused, in plain sentences and
 with no numbers, or per repetition the positive work, peak force, range of motion and lift time, with a visible
 note on a rep that was too fast for the filter or was measured over less than 90 % of the detected movement, and
 the set's confidence. **Add to today** puts the set into the other view as an `ESTIMATE` session (the camera path has not been validated on

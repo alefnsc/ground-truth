@@ -7,6 +7,7 @@
 import type { PoseLandmarker } from "@mediapipe/tasks-vision";
 import { ENVS, type Quantity, type SessionResult } from "../model/scenarios";
 import {
+  CAPTURE_LIMITS,
   CONFIDENCE_SENTENCE,
   SCALE_SENTENCE,
   analyseRecording,
@@ -132,8 +133,8 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
   const unfreezeButton = h("button", { type: "button", hidden: true }, "Unfreeze");
   const sliderA = h("input", { id: "cap-a", type: "range", min: 0, max: 1, step: 0.001, value: 0.3 });
   const sliderB = h("input", { id: "cap-b", type: "range", min: 0, max: 1, step: 0.001, value: 0.7 });
-  const lengthInput = h("input", { id: "cap-length", type: "number", inputmode: "decimal", min: 0.05, max: 3, step: 0.01 });
-  const statureInput = h("input", { id: "cap-stature", type: "number", inputmode: "decimal", min: 1, max: 2.5, step: 0.01 });
+  const lengthInput = h("input", { id: "cap-length", type: "number", inputmode: "decimal", ...CAPTURE_LIMITS.knownLengthM });
+  const statureInput = h("input", { id: "cap-stature", type: "number", inputmode: "decimal", ...CAPTURE_LIMITS.statureM });
   const useLengthButton = h("button", { type: "button" }, "Use this length as the scale");
   const useStatureButton = h("button", { type: "button" }, "Read my eye and ankle from the frozen frame");
   const lengthHint = h("p", { class: "field-error", hidden: true }, "Tap the two ends on the frozen frame, or move both sliders.");
@@ -183,8 +184,8 @@ export function mountCapture(root: HTMLElement, onAdd: (session: SessionResult) 
 
   // ---- 4. load ---------------------------------------------------------------------------------
 
-  const massInput = h("input", { id: "cap-mass", type: "number", inputmode: "decimal", min: 0.1, max: 500, step: 0.1 });
-  const forceInput = h("input", { id: "cap-force", type: "number", inputmode: "decimal", min: 0, max: 10000, step: 10, value: 0 });
+  const massInput = h("input", { id: "cap-mass", type: "number", inputmode: "decimal", ...CAPTURE_LIMITS.massKg });
+  const forceInput = h("input", { id: "cap-force", type: "number", inputmode: "decimal", ...CAPTURE_LIMITS.deviceForceN, value: 0 });
   const envSelect = h("select", { id: "cap-env" }, ...ENV_OPTIONS.map((o) => h("option", { value: o.value }, o.label)));
   const loadProblem = h("p", { class: "note", hidden: true });
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { PoseFrame, RepResult } from "@ground-truth/capture";
 import { legSession, syntheticSession } from "../../capture/test/helpers";
 import {
+  CAPTURE_LIMITS,
   CONFIDENCE_SENTENCE,
   SCALE_SENTENCE,
   analyseRecording,
@@ -19,6 +20,7 @@ import {
   type FlowEvent,
   type FlowState,
 } from "../src/model/captureFlow";
+import { PARAM_FIELDS } from "../src/model/scenarios";
 
 /*
  * Synthetic lifts: a 10 kg load, 0.5 m minimum-jerk lifts of 1 s with 1 s lowerings and rests, 60 Hz, Earth,
@@ -104,6 +106,37 @@ describe("scale", () => {
     const nan = scaleFrom({ kind: "stature", statureM: Number.NaN, eyeY: 0.1, ankleY: 0.9 });
     expect(nan.ok).toBe(false);
   });
+
+  it("a height typed in centimetres (175) gives no scale, and the reason names metres", () => {
+    const cm = scaleFrom({ kind: "stature", statureM: 175, eyeY: 0.12, ankleY: 0.92 }); // would read about 196 m per frame height
+    expect(cm.ok).toBe(false);
+    if (cm.ok) return;
+    expect(cm.reason).toMatch(/metres/);
+    expect(cm.reason).toContain(`${CAPTURE_LIMITS.statureM.min} to ${CAPTURE_LIMITS.statureM.max} m`);
+  });
+
+  it("a known length typed in centimetres (30) gives no scale, and the reason names metres", () => {
+    const cm = scaleFrom({ kind: "known-length", lengthM: 30, yA: 0.4, yB: 0.6 }); // would read 150 m per frame height
+    expect(cm.ok).toBe(false);
+    if (cm.ok) return;
+    expect(cm.reason).toMatch(/metres/);
+    expect(cm.reason).toContain(`${CAPTURE_LIMITS.knownLengthM.min} to ${CAPTURE_LIMITS.knownLengthM.max} m`);
+  });
+
+  it("the scale inputs are accepted at their limits and refused just outside them", () => {
+    const length = (lengthM: number) => scaleFrom({ kind: "known-length", lengthM, yA: 0.4, yB: 0.7 }).ok;
+    const stature = (statureM: number) => scaleFrom({ kind: "stature", statureM, eyeY: 0.12, ankleY: 0.92 }).ok;
+    const { knownLengthM, statureM } = CAPTURE_LIMITS;
+    expect([length(knownLengthM.min), length(knownLengthM.max)]).toEqual([true, true]);
+    expect([length(knownLengthM.min - 0.001), length(knownLengthM.max + 0.001)]).toEqual([false, false]);
+    expect([stature(statureM.min), stature(statureM.max)]).toEqual([true, true]);
+    expect([stature(statureM.min - 0.001), stature(statureM.max + 0.001)]).toEqual([false, false]);
+  });
+
+  it("the limits are plausible for a person and a hand-held object, in metres", () => {
+    expect(CAPTURE_LIMITS.statureM).toMatchObject({ min: 1, max: 2.5 });
+    expect(CAPTURE_LIMITS.knownLengthM).toMatchObject({ min: 0.05, max: 3 });
+  });
 });
 
 describe("inputs", () => {
@@ -114,6 +147,26 @@ describe("inputs", () => {
     expect(captureInputProblem({ ...earth, deviceForceN: -5 })).toMatch(/force/i);
     expect(captureInputProblem({ ...earth, deviceForceN: Number.NaN })).toMatch(/not a number/i);
     expect(captureInputProblem({ ...earth, gEnvMs2: -1 })).toMatch(/gravity/i);
+  });
+
+  it("the mass and the device force are accepted at their limits and refused just outside them, with the unit in the sentence", () => {
+    const { massKg, deviceForceN } = CAPTURE_LIMITS;
+    expect(captureInputProblem({ ...earth, massKg: massKg.min })).toBeNull();
+    expect(captureInputProblem({ ...earth, massKg: massKg.max })).toBeNull();
+    expect(captureInputProblem({ ...earth, massKg: massKg.min - 0.01 })).toMatch(/kilograms/);
+    expect(captureInputProblem({ ...earth, massKg: massKg.max + 0.1 })).toMatch(/kilograms/);
+    expect(captureInputProblem({ ...earth, massKg: 5000 })).toContain(`${massKg.min} to ${massKg.max} kg`);
+    expect(captureInputProblem({ ...earth, deviceForceN: deviceForceN.min })).toBeNull();
+    expect(captureInputProblem({ ...earth, deviceForceN: deviceForceN.max })).toBeNull();
+    expect(captureInputProblem({ ...earth, deviceForceN: deviceForceN.max + 1 })).toMatch(/newtons/);
+    expect(captureInputProblem({ ...earth, deviceForceN: 1e9 })).toContain(`${deviceForceN.min} to ${deviceForceN.max} N`);
+    expect(captureInputProblem({ ...earth, deviceForceN: Number.POSITIVE_INFINITY })).toMatch(/newtons/);
+  });
+
+  it("the device force has the limit of the squat device in the other view, and the mass is a liftable one", () => {
+    const squatDevice = PARAM_FIELDS.squats.find((f) => f.key === "deviceForceN");
+    expect(squatDevice).toMatchObject({ min: CAPTURE_LIMITS.deviceForceN.min, max: CAPTURE_LIMITS.deviceForceN.max });
+    expect(CAPTURE_LIMITS.massKg).toMatchObject({ min: 0.1, max: 500 });
   });
 });
 

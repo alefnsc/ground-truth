@@ -22,7 +22,7 @@ import {
   type RepResult,
 } from "@ground-truth/capture";
 import type { Confidence } from "@ground-truth/physics";
-import { cameraPipelineTag, cameraSession, derive, labelled, source, type Detail, type Quantity, type SessionResult } from "./scenarios";
+import { DEVICE_FORCE_LIMITS_N, cameraPipelineTag, cameraSession, derive, labelled, source, type Detail, type Quantity, type SessionResult } from "./scenarios";
 
 // ---------------------------------------------------------------------------
 // State machine: idle -> calibrating -> ready -> recording -> analysed | refused
@@ -113,8 +113,32 @@ export type ScaleMethod =
 
 export type ScaleOutcome = { ok: true; metersPerUnit: number; quantity: Quantity } | { ok: false; reason: string };
 
+/**
+ * What the capture view accepts, each limit defined once: the model refuses anything outside, and the view's
+ * fields take their min, max and step from here. Judgement calls, set to catch a value typed in the wrong unit
+ * (a height of 175, a ruler of 30) before it becomes a scale: a hand-held object from 5 cm to 3 m, a standing
+ * person from 1 to 2.5 m, a weight a person can lift (0.1 to 500 kg), and the squat device's force range.
+ */
+export const CAPTURE_LIMITS = {
+  knownLengthM: { min: 0.05, max: 3, step: 0.01 },
+  statureM: { min: 1, max: 2.5, step: 0.01 },
+  massKg: { min: 0.1, max: 500, step: 0.1 },
+  deviceForceN: { ...DEVICE_FORCE_LIMITS_N, step: 10 },
+} as const;
+
+const within = (value: number, limits: { min: number; max: number }): boolean => Number.isFinite(value) && value >= limits.min && value <= limits.max;
+
 /** Metres per frame height from the chosen method, tagged ESTIMATE, or the reason there is none. */
 export function scaleFrom(method: ScaleMethod): ScaleOutcome {
+  // A number above 0 that is outside the limits is most likely in centimetres; anything else falls to the reasons below.
+  if (method.kind === "known-length" && method.lengthM > 0 && !within(method.lengthM, CAPTURE_LIMITS.knownLengthM)) {
+    const { min, max } = CAPTURE_LIMITS.knownLengthM;
+    return { ok: false, reason: `No scale from the known length: enter the length in metres, from ${min} to ${max} m (30 cm is 0.3).` };
+  }
+  if (method.kind === "stature" && method.statureM > 0 && !within(method.statureM, CAPTURE_LIMITS.statureM)) {
+    const { min, max } = CAPTURE_LIMITS.statureM;
+    return { ok: false, reason: `No scale from your height: enter your height in metres, from ${min} to ${max} m (175 cm is 1.75).` };
+  }
   try {
     if (method.kind === "known-length") {
       const metersPerUnit = metersPerUnitFromKnownLength(method.lengthM, method.yA, method.yB);
@@ -177,9 +201,11 @@ export interface CaptureInputs {
 /** What is wrong with the inputs, in a sentence, or null. Check before analysing: bad inputs are programmer errors to the capture package. */
 export function captureInputProblem(inputs: CaptureInputs): string | null {
   if (!Number.isFinite(inputs.massKg) || inputs.massKg <= 0) return "Enter the mass of the weight, above 0 kg.";
+  if (!within(inputs.massKg, CAPTURE_LIMITS.massKg)) return `Enter the mass of the weight in kilograms, from ${CAPTURE_LIMITS.massKg.min} to ${CAPTURE_LIMITS.massKg.max} kg.`;
   if (!Number.isFinite(inputs.gEnvMs2) || inputs.gEnvMs2 < 0) return "The gravity of the environment must be 0 or more.";
   if (Number.isNaN(inputs.deviceForceN)) return "The device force is not a number: leave it empty for none, or enter newtons.";
-  if (!Number.isFinite(inputs.deviceForceN) || inputs.deviceForceN < 0) return "A device force must be 0 N or more.";
+  if (inputs.deviceForceN < 0) return "A device force must be 0 N or more.";
+  if (!within(inputs.deviceForceN, CAPTURE_LIMITS.deviceForceN)) return `Enter the device force in newtons, from ${CAPTURE_LIMITS.deviceForceN.min} to ${CAPTURE_LIMITS.deviceForceN.max} N, or leave it empty for none.`;
   return null;
 }
 
