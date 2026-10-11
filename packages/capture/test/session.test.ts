@@ -120,13 +120,6 @@ describe("analyzeSession: measurement", () => {
     }
   });
 
-  it("a stationary noisy 6 s recording: a measurement of nothing, not a refusal", () => {
-    const r = ok(analyze(session({ reps: 0, restS: 6, noiseM: 0.002 })));
-    expect(r.reps).toEqual([]);
-    expect(r.totalPositiveWorkJ).toBe(0);
-    expect(r.maxPeakForceN).toBe(0);
-  });
-
   it("ISS, deviceForceN 1000, 3 reps, ±2 mm: positive work per rep within 5 % of 500 J", () => {
     // Derivation. At g = 0 the force on the load is F = m a + F_device, with F_device = 1000 N.
     // Work over the lift = ∫ F dy = F_device · h + ½ m (v_end² − v_start²) = 1000 × 0.5 + 0 = 500 J,
@@ -226,6 +219,28 @@ describe("analyzeSession: refusal", () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.reasons).toEqual(["NO_SCALE", "LOW_FRAME_RATE"]);
+  });
+
+  it("a stationary noisy 6 s recording: refused with NO_REPS, not measured as 0 J", () => {
+    const r = analyze(session({ reps: 0, restS: 6, noiseM: 0.002 }));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reasons).toEqual(["NO_REPS"]);
+    expect(r.quality.reasons).toEqual(["NO_REPS"]);
+    for (const key of ["reps", "totalPositiveWorkJ", "maxPeakForceN", "provenance"]) expect(key in r).toBe(false);
+  });
+
+  it("a lift that is never lowered is refused with NO_REPS, and keeps its quality diagnostics", () => {
+    const r = analyze(legSession({ legs: [[1, 0], [1, 0.5], [2, 0.5]], noiseM: 0.002 }));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reasons).toEqual(["NO_REPS"]);
+    expect(r.quality.rateHz).toBeCloseTo(60, 6);
+    expect(r.quality.durationS).toBeCloseTo(4, 6);
+  });
+
+  it("one complete repetition is enough: lifted and lowered once is a measurement", () => {
+    expect(ok(analyze(session({ reps: 1, noiseM: 0.002 }))).reps).toHaveLength(1);
   });
 });
 
@@ -354,6 +369,8 @@ describe("analyzeSession: invalid input", () => {
     const defaults = ok(analyze(f));
     const wide = ok(analyze(f, { cutoffHz: 10 }));
     expect(wide.maxPeakForceN).toBeGreaterThan(defaults.maxPeakForceN);
-    expect(ok(analyze(f, { minPhaseDisplacementM: 0.6 })).reps).toEqual([]);
+    const none = analyze(f, { minPhaseDisplacementM: 0.6 });
+    expect(none.ok).toBe(false);
+    if (!none.ok) expect(none.reasons).toEqual(["NO_REPS"]);
   });
 });

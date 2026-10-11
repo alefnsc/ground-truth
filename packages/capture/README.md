@@ -96,7 +96,7 @@ not here) must produce:
 | 2 | `resampleUniform` | Drops low-visibility frames, then linear interpolation onto a uniform grid at the median frame rate. Nothing is extrapolated. |
 | 3 | `toMetersUp` | The one place where image coordinates (y down) become metres (y up): `yM = −wristY · metersPerUnit`, first sample 0. |
 | 4 | `lowPassZeroPhase` | 2nd-order Butterworth, forward then backward, 4 Hz by default. A recording not longer than the filter's padding is refused `TOO_SHORT`. |
-| 5 | `segmentReps` | Displacement hysteresis on position extrema. |
+| 5 | `segmentReps` | Displacement hysteresis on position extrema. A recording in which it finds no complete repetition is refused `NO_REPS`. |
 | 6 | rep window | Each rep is trimmed to its movement, between the pause before the top and the pause after it whose rest levels agree: the lift starts where the position leaves the first pause's rest level, the lowering ends where it reaches the second's. |
 | 7 | `trajectoryWork` | Per trimmed rep, from `@ground-truth/physics`, with the optional constant device force. |
 
@@ -113,6 +113,7 @@ unchanged).
 | `LANDMARK_LOST` | more than 10 % of frames have visibility < 0.5 (or a non-finite `wristY`), or more than 10 % were dropped for their timestamps | `MAX_LOW_VISIBILITY_FRACTION`, `VISIBILITY_THRESHOLD` |
 | `GAP_TOO_LONG` | more than 0.25 s between usable frames | `MAX_GAP_S` |
 | `TOO_SHORT` | recording under 1.0 s, or no longer than the filter padding (`ceil(3·rate/cutoff)` samples, 90 at 60 Hz with a 2 Hz cutoff) | `MIN_DURATION_S`, `PADDING_CUTOFF_PERIODS` |
+| `NO_REPS` | no complete repetition found: the wrist never rose and came back down by `minPhaseDisplacementM`, 0.10 m by default (held still, or lifted and never lowered) | `MIN_PHASE_DISPLACEMENT_M` |
 
 `MIN_RATE_HZ` is 20, under every nominal camera rate (23.976, 24, 25, 29.97, 30): a
 median of measured timestamps lands a hair either side of a nominal rate, so no
