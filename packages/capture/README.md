@@ -67,7 +67,7 @@ gives margin. What happens otherwise, **measured on synthetic signals** (0.5 m c
 | Set-down straight after the last lowering, no pause | Negative work **+120 %** (lowering, then at once a 0.6 m set-down) to **+178 %** (one movement from the top to the floor). Positive work and range of motion are right (−0.5 %). | `trimmedRangeFraction` 0.45 |
 | Pick-up straight into the first curl, no pause | Range of motion and positive work **+120 %** (1.10 m for a 0.5 m curl), start 1.1 s early. Negative work is right. | No: `trimmedRangeFraction` reads 1.00 |
 | Pick-up and first curl as one movement from the floor | Range of motion and positive work +120 %: the whole 1.10 m is one lift. | No |
-| Recording starts mid-lift, or stops mid-lowering | The visible part is counted as a rep; work, range and duration are partial. | No |
+| Recording starts mid-lift, or stops mid-lowering | The visible part is counted as a rep; work, range and duration are partial. A lift whose lowering has not yet come down 0.10 m when the recording stops is not a rep: it is left out, and if it was the only one the recording is refused `NO_REPS`. | No, unless it is refused |
 | Movement not side-on | Reads as less range of motion. | No |
 
 ## Adapter contract
@@ -351,6 +351,8 @@ between 3 and 5 cm/s.** (The previous rule collapsed at 5 cm/s and below, to −
 - **A recording that starts mid-lift** is counted as a rep for the part that is visible,
   and one that **stops mid-lowering** ends its last rep at the last sample if the lowering
   has already passed the threshold. Work, range of motion and duration are then partial.
+  One that stops before that (at the top, or under 0.10 m into the lowering) loses that
+  last lift; a recording with no other repetition is then refused `NO_REPS`.
 - **`startS`** is measured from the first frame of the recording (the first with a usable
   timestamp), so a clock that starts at 123456.789 s changes nothing.
 - **Edge padding** is a point reflection about the end sample (`2·x₀ − xⱼ`), three
