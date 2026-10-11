@@ -35,6 +35,19 @@ Missions](https://www.spaceappschallenge.org/2026/challenges/create-health-monit
 
 ---
 
+## Run the demo
+
+```sh
+npm install                              # once
+npm run dev -w @ground-truth/demo        # http://localhost:5173
+npm run dev:https -w @ground-truth/demo  # on a phone: HTTPS, self-signed certificate
+```
+
+A single page with two views: the same day of exercise under Earth, Moon, Mars and ISS gravity, as two
+separate numbers (energy and load); and a capture view that measures a lifting set from a camera or a video
+file. See [`packages/demo/README.md`](packages/demo/README.md), including what has not been verified: the camera
+on a real phone and a real lifting video have not been tried.
+
 ## The strategy
 
 [`docs/strategy.md`](docs/strategy.md) — the verified brief this build executes
