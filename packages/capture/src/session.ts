@@ -491,6 +491,12 @@ export function analyzeSession(frames: readonly PoseFrame[], options: SessionOpt
     };
   });
 
+  // A recording with no complete repetition (held still, or lifted and never lowered) is not a measurement of 0 J.
+  if (reps.length === 0) {
+    const reasons: RefusalReason[] = ["NO_REPS"];
+    return { ok: false, reasons, quality: { ...quality, reasons } };
+  }
+
   return {
     ok: true,
     reps,

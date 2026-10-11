@@ -6,7 +6,7 @@
 import type { PoseFrame } from "./frames";
 import { requireFinite } from "./internal";
 
-export type RefusalReason = "NO_SCALE" | "LOW_FRAME_RATE" | "LANDMARK_LOST" | "GAP_TOO_LONG" | "TOO_SHORT";
+export type RefusalReason = "NO_SCALE" | "LOW_FRAME_RATE" | "LANDMARK_LOST" | "GAP_TOO_LONG" | "TOO_SHORT" | "NO_REPS";
 
 /**
  * Judgement call: below this a 1 s lift has too few samples. Set under every nominal

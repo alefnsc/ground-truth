@@ -52,8 +52,10 @@ describe("analyzeSession: bad data is refused, not thrown on", () => {
     expect(r.quality.durationS).toBeGreaterThan(1);
   });
 
-  it("the same 1.2 s recording is measured with the default 4 Hz cutoff (73 samples, padding 45)", () => {
-    expect(ok(analyzeSession(session({ reps: 0, restS: 1.2 }), OPTIONS)).reps).toEqual([]);
+  it("the same 1.2 s recording is long enough for the default 4 Hz cutoff (73 samples, padding 45): no TOO_SHORT, only NO_REPS for holding still", () => {
+    const r = analyzeSession(session({ reps: 0, restS: 1.2 }), OPTIONS);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reasons).toEqual(["NO_REPS"]);
   });
 
   it("timestamps in milliseconds do not throw (they are refused, and that is fine)", () => {
