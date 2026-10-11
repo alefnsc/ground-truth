@@ -81,10 +81,8 @@ export const CONFIDENCE_SENTENCE = "Confidence grades the recording conditions, 
 
 const percent = (fraction: number): string => `${Math.round(fraction * 100)} %`;
 
-/** The capture package's refusal reasons, one sentence each, plus this view's own NO_REPS. */
-export type CaptureRefusal = RefusalReason | "NO_REPS";
-
-const SENTENCES: Readonly<Record<CaptureRefusal, string>> = {
+/** The capture package's refusal reasons, one sentence each. */
+const SENTENCES: Readonly<Record<RefusalReason, string>> = {
   NO_SCALE: "There is no scale yet: calibrate with a known length or with your height before recording.",
   LOW_FRAME_RATE: `The video runs too slowly, or its frame times are too uneven, to follow a lift: it needs about ${MIN_RATE_HZ} frames per second or more.`,
   LANDMARK_LOST: `The wrist was lost in too many frames (more than ${percent(MAX_LOW_VISIBILITY_FRACTION)}), or frames arrived repeated or out of order.`,
@@ -93,7 +91,7 @@ const SENTENCES: Readonly<Record<CaptureRefusal, string>> = {
   NO_REPS: `No repetition was found: a rep is a lift of at least ${Math.round(MIN_PHASE_DISPLACEMENT_M * 100)} cm followed by a lowering, with the weight held still before and after.`,
 };
 
-export function refusalSentences(reasons: readonly CaptureRefusal[]): string[] {
+export function refusalSentences(reasons: readonly RefusalReason[]): string[] {
   return reasons.map((r) => SENTENCES[r]);
 }
 
@@ -208,7 +206,7 @@ export type CaptureOutcome =
       confidenceSentence: string;
       quality: QualityReport;
     }
-  | { kind: "refused"; reasons: { code: CaptureRefusal; sentence: string }[] };
+  | { kind: "refused"; reasons: { code: RefusalReason; sentence: string }[] };
 
 /** The scale's note, always ending with the sentence that it is the largest error, once. */
 function scaleNote(note: string | undefined): string {
@@ -227,9 +225,6 @@ export function analyseRecording(frames: readonly PoseFrame[], inputs: CaptureIn
 
   if (!result.ok) {
     return { kind: "refused", reasons: result.reasons.map((code) => ({ code, sentence: SENTENCES[code] })) };
-  }
-  if (result.reps.length === 0) {
-    return { kind: "refused", reasons: [{ code: "NO_REPS", sentence: SENTENCES.NO_REPS }] };
   }
 
   const reps: RepRow[] = result.reps.map((rep, i) => ({ index: i + 1, rep, notes: repNotes(rep) }));

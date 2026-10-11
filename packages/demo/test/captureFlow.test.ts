@@ -265,7 +265,7 @@ describe("a recording that is refused", () => {
     expect(outcome.reasons.map((r) => r.code)).toContain("LOW_FRAME_RATE");
   });
 
-  it("a recording with no movement has no rep: refused, with its own sentence", () => {
+  it("a recording with no movement has no rep: refused by the capture package, with its own sentence", () => {
     const still = syntheticSession({ ...lift, reps: 0, restS: 5 });
     const outcome = analyseRecording(still, earth, label);
     expect(outcome.kind).toBe("refused");
@@ -275,9 +275,9 @@ describe("a recording that is refused", () => {
   });
 
   it("every reason has a sentence", () => {
-    const sentences = refusalSentences(["NO_SCALE", "LOW_FRAME_RATE", "LANDMARK_LOST", "GAP_TOO_LONG", "TOO_SHORT"]);
-    expect(sentences).toHaveLength(5);
-    expect(new Set(sentences).size).toBe(5);
+    const sentences = refusalSentences(["NO_SCALE", "LOW_FRAME_RATE", "LANDMARK_LOST", "GAP_TOO_LONG", "TOO_SHORT", "NO_REPS"]);
+    expect(sentences).toHaveLength(6);
+    expect(new Set(sentences).size).toBe(6);
     for (const s of sentences) expect(s.trim().length).toBeGreaterThan(20);
   });
 });
