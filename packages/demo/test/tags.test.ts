@@ -166,6 +166,8 @@ describe("day tags", () => {
     expect(computeDay(person, ENVS.EARTH, [cycle]).totalEnergy.tag).toBe("MODEL");
     expect(computeDay(person, ENVS.EARTH, [cycle, camera()]).totalEnergy.tag).toBe("ESTIMATE");
     expect(computeDay(person, ENVS.EARTH, [camera()]).totalEnergy.tag).toBe("ESTIMATE");
-    expect(computeDay(person, ENVS.EARTH, [camera()]).stimulus.tag).toBe("ESTIMATE");
+    // The camera set has no bout, so the stimulus is the model's zero, not a camera estimate.
+    expect(computeDay(person, ENVS.EARTH, [camera()]).stimulus.tag).toBe("MODEL");
+    expect(computeDay(person, ENVS.ISS, [treadmill, camera()]).stimulus.tag).toBe(computeDay(person, ENVS.ISS, [treadmill]).stimulus.tag);
   });
 });

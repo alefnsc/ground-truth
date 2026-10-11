@@ -59,7 +59,7 @@ export interface DayResult {
 
 /** What the Load number rests on, one line, shown under it. */
 export const LOAD_RESTS_ON =
-  "Rests on: exponent m = 4 (Carter, Whalen and Beaupré); stress at the bone proportional to force; the static squat peak, per leg; the 2.5 body-weight running multiple (an assumption); steps / 2 loading cycles per leg; the Genc 2010 decrement on the ISS.";
+  "Rests on: exponent m = 4 (Carter, Whalen and Beaupré); stress at the bone proportional to force; the static squat peak, per leg; the 2.5 body-weight running multiple (an assumption); steps / 2 loading cycles per leg; the Genc 2010 decrement on the ISS. A camera set adds nothing to it: its peak is the force on the weight, not through the skeleton.";
 
 /** Shown with the Moon or Mars selected, without opening anything. Null elsewhere. */
 export function partialGravityCaveat(body: Body): string | null {
@@ -69,7 +69,7 @@ export function partialGravityCaveat(body: Body): string | null {
 }
 
 const STIMULUS_UNIT = "N·cycles^(1/4)";
-const NO_LOAD_TERM = "No skeletal load term in this day's sessions (a cycle ergometer has none in this model, and a session that cannot be done here has none either).";
+const NO_LOAD_TERM = "No skeletal load term in this day's sessions (a cycle ergometer has none in this model, a camera set has none because its peak is the force on the weight and not through the skeleton, and a session that cannot be done here has none either).";
 
 function bouts(sessions: readonly SessionResult[]): LoadBout[] {
   return sessions.flatMap((s) => (s.bout ? [s.bout] : []));

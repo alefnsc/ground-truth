@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  CAMERA_PEAK_SCOPE,
   CYCLE_DEFAULTS,
   ENVS,
   SQUAT_DEFAULTS,
@@ -254,7 +255,7 @@ describe("treadmill run", () => {
 });
 
 describe("camera set", () => {
-  it("is ESTIMATE until validated, carries a bout of the rep count at the largest peak force, and keeps its details", () => {
+  it("is ESTIMATE until validated, has no bout (its force is on the weight, not through the skeleton), and keeps its details", () => {
     const s = cameraSession({
       id: "camera-1",
       title: "Camera set",
@@ -266,7 +267,9 @@ describe("camera set", () => {
     });
     expect(s.energy).toMatchObject({ value: 147.15, unit: "J", tag: "ESTIMATE" }); // F2: was MEASURED
     expect(s.peakLoad).toMatchObject({ value: 127, unit: "N", tag: "ESTIMATE" }); // F2: was MEASURED
-    expect(s.bout).toEqual({ cycles: 3, peakLoad: 127 });
+    expect(s.bout).toBeNull();
+    expect(s.boutInputs).toEqual([]);
+    expect(s.peakLoad.note).toContain(CAMERA_PEAK_SCOPE);
     expect(s.details).toHaveLength(1);
   });
 

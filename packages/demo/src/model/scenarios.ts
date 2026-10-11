@@ -475,7 +475,8 @@ export interface CameraSetInput {
 /**
  * A set measured from a camera or a video file. Energy and peak load are no more certain than the unvalidated
  * pipeline and the scale (ESTIMATE). The set is a record of a real lift in the environment it was recorded in,
- * so it is the same in every environment of the selector: it is not re-scaled.
+ * so it is the same in every environment of the selector: it is not re-scaled. It adds energy to the day and
+ * nothing to the load stimulus.
  */
 export function cameraSession(set: CameraSetInput): SessionResult {
   const energy = derive(
@@ -492,14 +493,14 @@ export function cameraSession(set: CameraSetInput): SessionResult {
     set.inputs,
     `Largest peak force over the reps, from second differences of the filtered wrist position. ${CAMERA_PEAK_SCOPE} The noisiest output: indicative only. Not validated on real video.`,
   );
-  const cycles = derive(set.reps, "cycles", "EXACT", [energy], "One per detected rep.");
   return {
     id: set.id,
     title: set.title,
     energy,
     peakLoad,
-    bout: set.reps > 0 ? { cycles: set.reps, peakLoad: set.maxPeakForceN } : null,
-    boutInputs: set.reps > 0 ? [peakLoad, cycles] : [],
+    // No bout: the load stimulus is defined on the force through the skeleton, and this peak is the force on the weight.
+    bout: null,
+    boutInputs: [],
     details: set.details,
   };
 }

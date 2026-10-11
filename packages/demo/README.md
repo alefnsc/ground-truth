@@ -63,7 +63,7 @@ with no numbers, or per repetition the positive work, peak force, range of motio
 note on a rep that was too fast for the filter or was measured over less than 90 % of the detected movement, and
 the set's confidence. **Add to today** puts the set into the other view as an `ESTIMATE` session (the camera path has not been validated on
 real video; the scale is itself an estimate). Its peak load is the force on the weight, not through the skeleton, and
-excludes body weight. A set is a
+excludes body weight, so the set adds its energy to the day and nothing to Load. A set is a
 record of a real lift, so it is the same in every environment of the other view and is not re-scaled.
 
 **Provenance tags.** `MEASURED` (measured directly, such as a frame rate), `MANUAL` (entered, or a device setting), `MODEL` (a published formula
@@ -165,7 +165,8 @@ an `ESTIMATE`, always shown as a range in joules, never as one figure and never 
   each leg once with half the total force). Mixing a one-leg force with a two-leg force would overweight squats up to 16
   times under the fourth power.
 - The squat's energy moves the whole body mass through the full stroke; a real squat moves the centre of mass less.
-- A camera set's peak is the force on the weight, not through the skeleton, and excludes body weight.
+- A camera set's peak is the force on the weight, not through the skeleton, and excludes body weight. It is shown
+  on the set's card and does not enter the load stimulus: a camera set has no skeletal load term.
 - The stress at the bone is taken as proportional to the force (the physics package's assumption for cycles to match).
 
 ## Model licence and intended use

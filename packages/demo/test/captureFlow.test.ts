@@ -120,7 +120,7 @@ describe("inputs", () => {
 describe("a recording that is analysed", () => {
   const outcome = analyseRecording(syntheticSession(lift), earth, label);
 
-  it("becomes a camera SessionResult: ESTIMATE energy and peak load (unvalidated), and a bout of the reps", () => {
+  it("becomes a camera SessionResult: ESTIMATE energy and peak load (unvalidated), and no bout for the load stimulus", () => {
     expect(outcome.kind).toBe("analysed");
     if (outcome.kind !== "analysed") return;
     const s = outcome.session;
@@ -132,8 +132,8 @@ describe("a recording that is analysed", () => {
     expect(s.energy.value as number).toBeLessThan(147.15 * 1.03);
     expect(s.peakLoad.value as number).toBeGreaterThan(126.97 * 0.97);
     expect(s.peakLoad.value as number).toBeLessThan(126.97 * 1.03);
-    expect(s.bout?.cycles).toBe(3);
-    expect(s.bout?.peakLoad).toBe(s.peakLoad.value);
+    expect(s.bout).toBeNull();
+    expect(s.boutInputs).toEqual([]);
     expect(outcome.reps).toHaveLength(3);
   });
 
@@ -349,7 +349,7 @@ describe("the device force field (M5)", () => {
   });
 });
 
-describe("the camera set's bout uses the largest peak force (M13)", () => {
+describe("the camera set's peak load is the largest peak force (M13)", () => {
   // Two reps of 0.5 m: one lifted in 1.0 s, one in 1.6 s. Hand: a_peak = (10 / √3) h / T², so F = 10 (9.81 + a_peak):
   //   T = 1.0 s: a = 5.7735 × 0.5 / 1.00 = 2.887 m/s², F = 126.97 N
   //   T = 1.6 s: a = 5.7735 × 0.5 / 2.56 = 1.128 m/s², F = 109.38 N
@@ -360,15 +360,14 @@ describe("the camera set's bout uses the largest peak force (M13)", () => {
   it.each([
     ["fast first", [...fast, ...slow]],
     ["fast last", [[1, 0], ...slow, [1, 0], ...fast.slice(1)] as [number, number][]],
-  ])("%s: peak load and the bout are the maximum over the reps, and the reps differ", (_name, legs) => {
+  ])("%s: peak load is the maximum over the reps, and the reps differ", (_name, legs) => {
     const o = run(legs as [number, number][]);
     if (o.kind !== "analysed") throw new Error("expected analysed");
     const peaks = o.reps.map((r) => r.rep.peakForceN);
     expect(o.reps).toHaveLength(2);
     expect(Math.min(...peaks)).toBeLessThan(Math.max(...peaks) - 10); // 127 against 109: a first-or-last rule would be wrong
     expect(o.session.peakLoad.value).toBe(Math.max(...peaks));
-    expect(o.session.bout?.peakLoad).toBe(Math.max(...peaks));
-    expect(o.session.bout?.peakLoad).toBeGreaterThan(120);
+    expect(o.session.peakLoad.value as number).toBeGreaterThan(120);
     expect(o.session.energy.value).toBeCloseTo(o.reps.reduce((sum, r) => sum + r.rep.positiveWorkJ, 0), 9);
   });
 });

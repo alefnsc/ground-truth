@@ -170,11 +170,36 @@ describe("deficit over a mission", () => {
 describe("a measured set in the day", () => {
   const measured = cameraSession({ id: "camera-1", title: "Camera set", reps: 3, totalPositiveWorkJ: 147.15, maxPeakForceN: 127, inputs: [], details: [] });
 
-  it("is the same in every environment, so it carries no gap by itself", () => {
+  it("adds its energy and no skeletal load: its peak is the force on the weight, not through the skeleton", () => {
     const iss = computeDay(person, ENVS.ISS, [{ kind: "camera", session: measured }]);
-    expect(iss.stimulusRatio.value).toBe(1);
+    expect(iss.stimulus.value).toBe(0);
+    expect(iss.earthStimulus.value).toBe(0);
+    expect(iss.stimulusRatio.value).toBeNull(); // was 1: the wrist force had been read as a skeletal load
+    expect(iss.stimulusRatio.note).toMatch(/camera set has none/i);
+    expect(iss.cyclesToMatch.value).toBeNull();
     expect(iss.totalEnergy.value).toBeCloseTo(147.15, 9);
     expect(iss.totalEnergy.tag).toBe("ESTIMATE"); // F2: was MEASURED
+  });
+
+  it("an ISS day of cycling plus a 10 kg curl set (10 reps, peak 127 N) has the Load of the cycling alone: none", () => {
+    const curl = cameraSession({ id: "camera-1", title: "Camera set", reps: 10, totalPositiveWorkJ: 490.5, maxPeakForceN: 127, inputs: [], details: [] });
+    const alone = computeDay(person, ENVS.ISS, [cycle]);
+    const withSet = computeDay(person, ENVS.ISS, [cycle, { kind: "camera", session: curl }]);
+    expect(withSet.stimulus.value).toBe(alone.stimulus.value);
+    expect(withSet.stimulusRatio.value).toBeNull(); // was 1: "100 % of the same day on Earth"
+    expect(missingEarthDays(withSet, 180).value).toBeNull(); // was 0 of 180 Earth-days missing
+    expect(withSet.totalEnergy.value).toBeCloseTo(365040 + 490.5, 6);
+  });
+
+  it("does not move the Load of a day that has one, in any environment", () => {
+    for (const env of Object.values(ENVS)) {
+      const without = computeDay(person, env, [treadmill, squats, cycle]);
+      const withSet = computeDay(person, env, [treadmill, squats, cycle, { kind: "camera", session: measured }]);
+      expect(withSet.stimulus.value).toBe(without.stimulus.value);
+      expect(withSet.stimulusRatio.value).toBe(without.stimulusRatio.value);
+      expect(withSet.cyclesToMatch.value).toBe(without.cyclesToMatch.value);
+      expect(missingEarthDays(withSet, 180).value).toBe(missingEarthDays(without, 180).value);
+    }
   });
 
   it("mixing a camera set with a model takes the weaker tag for the total", () => {
@@ -226,7 +251,7 @@ describe("Earth-day equivalents (M3)", () => {
     expect(none.value).toBeNull();
     expect(none.note).toMatch(/no skeletal load term/i);
     const measured = cameraSession({ id: "c", title: "c", reps: 1, totalPositiveWorkJ: 1, maxPeakForceN: 1, inputs: [], details: [] });
-    expect(missingEarthDays(computeDay(person, ENVS.ISS, [{ kind: "camera", session: measured }]), 180).value).toBe(0);
+    expect(missingEarthDays(computeDay(person, ENVS.ISS, [{ kind: "camera", session: measured }]), 180).value).toBeNull(); // a camera set has no load term
   });
   it("has the tag of the ratio it comes from", () => {
     const day = computeDay(person, ENVS.ISS, [treadmill]);
@@ -257,7 +282,7 @@ describe("partial-gravity caveat and the assumptions the Load number rests on (F
   });
 
   it("the Load number lists what it rests on", () => {
-    for (const piece of ["exponent m = 4", "proportional to force", "per leg", "2.5 body-weight", "steps / 2", "Genc"]) {
+    for (const piece of ["exponent m = 4", "proportional to force", "per leg", "2.5 body-weight", "steps / 2", "Genc", "camera set adds nothing"]) {
       expect(LOAD_RESTS_ON).toContain(piece);
     }
   });
