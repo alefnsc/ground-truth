@@ -1,5 +1,10 @@
 # Ground Truth — strategy brief
 
+> **Dated note, added 2026-11-13.** This brief was committed on 2026-09-23, written from the one-paragraph
+> challenge summary of 2026-09-17, as preparation before the hackathon. It was not updated after the full
+> challenge statement (2026-10-28) or the judging and submission guides (2026-11-13). Where the code found
+> its numbers wrong, the package READMEs say so. The text below is unchanged.
+
 NASA Space Apps Challenge 2026 · [Create Health Monitoring Software for Astronauts on Space Missions](https://www.spaceappschallenge.org/2026/challenges/create-health-monitoring-software-for-astronauts-on-space-missions/)
 
 Every quantitative claim below carries a source. Figures marked **[pre-ARED]**
