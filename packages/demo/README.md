@@ -2,7 +2,7 @@
 
 A single-page web demo of the two currencies of the [brief](../../docs/strategy.md): **energy**
 (mechanical work) and **load** (a skeletal load stimulus), for a day of exercise under Earth, Moon,
-Mars and ISS gravity, and a way to estimate a lifting set from a camera or a video file (never run on a real person).
+Mars and ISS gravity, and a way to estimate the work and peak force of a lifting set from a camera or a video file (never run on a real person).
 
 Plain TypeScript, Vite, no UI framework, no CSS framework, no chart library. All numbers come from
 [`@ground-truth/physics`](../physics/README.md) and [`@ground-truth/capture`](../capture/README.md);
