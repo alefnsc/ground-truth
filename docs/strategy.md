@@ -1,5 +1,20 @@
 # Ground Truth — strategy brief
 
+> **Dated note, added 2026-11-13 (UTC−03:00).** This brief was committed on 2026-09-23, written from the
+> one-paragraph challenge summary of 2026-09-17, as preparation before the hackathon; its only later change
+> before this note is a two-line pointer to `demo-script.md` added to section 10 on 2026-10-09. It was not
+> updated after the full challenge statement (2026-10-28) or the judging and submission guides
+> (2026-11-13). Where the code found its numbers wrong, the package READMEs say so.
+>
+> It describes a wider product than was built, and much of that product is Vocaid, the author's separate
+> commercial product: section 4's existing stack (vital signs), section 7's professional share and
+> MCP-connector assistant (Vocaid roadmap items), and the Vocaid rules quoted in sections 2 and 9. None of
+> these, nor kilocalories, a saturating or rate-sensitive stimulus, per-site or per-compartment deficits, or
+> section 7's sync, is implemented here; see the root README.
+>
+> The text below is unchanged, including its challenge link, which no longer resolves; the challenge page
+> is now https://www.spaceappschallenge.org/2026/challenges/health-monitoring-software/.
+
 NASA Space Apps Challenge 2026 · [Create Health Monitoring Software for Astronauts on Space Missions](https://www.spaceappschallenge.org/2026/challenges/create-health-monitoring-software-for-astronauts-on-space-missions/)
 
 Every quantitative claim below carries a source. Figures marked **[pre-ARED]**

@@ -1,5 +1,12 @@
 # Consolidação para a Vocaid — nuances, cálculos e balizadores
 
+> **Dated note, added 2026-11-13 (UTC−03:00).** Internal memo committed on 2026-10-09, written from
+> [`strategy.md`](strategy.md) for the author's separate commercial product, before the hackathon. Its
+> present-tense statements describe plans, not this repository: the per-site deficit and the kcal display
+> were not built, and two of its figures are corrected in
+> [`packages/physics/README.md`](../packages/physics/README.md). See the root README. The text below is
+> unchanged.
+
 Resumo executivo da pesquisa do NASA Space Apps Challenge 2026 (*Create Health
 Monitoring Software for Astronauts on Space Missions*), destilado para decisão
 de produto na Vocaid. A fonte integral, com todas as citações, é
