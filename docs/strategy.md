@@ -3,7 +3,10 @@
 > **Dated note, added 2026-11-13.** This brief was committed on 2026-09-23, written from the one-paragraph
 > challenge summary of 2026-09-17, as preparation before the hackathon. It was not updated after the full
 > challenge statement (2026-10-28) or the judging and submission guides (2026-11-13). Where the code found
-> its numbers wrong, the package READMEs say so. The text below is unchanged.
+> its numbers wrong, the package READMEs say so. It describes a wider product than was built: kilocalories,
+> a saturating or rate-sensitive stimulus, per-site or per-compartment deficits, vital signs (section 4, the
+> author's separate product) and section 7's assistant and sync are not implemented here; see the root
+> README. The text below is unchanged.
 
 NASA Space Apps Challenge 2026 · [Create Health Monitoring Software for Astronauts on Space Missions](https://www.spaceappschallenge.org/2026/challenges/create-health-monitoring-software-for-astronauts-on-space-missions/)
 

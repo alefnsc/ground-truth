@@ -30,25 +30,28 @@ Every number is an estimate with a stated source; nothing here measures the body
   is unchanged: no commit was rewritten, squashed or re-dated.
 - **Earlier README text.** Until 2026-11-13 this file also held two draft team descriptions written on
   2026-09-23. They claimed things the code never did: that a cycle ergometer "burns real calories" (the code
-  never outputs calories), and a list of vital signs (circadian drift, resting heart rate and HRV, blood
+  reports work in joules and never derives kilocalories as a single figure), and a list of vital signs (circadian drift, resting heart rate and HRV, blood
   pressure, SpO2, glucose, nutrition) that is not implemented. They were removed on 2026-11-13; the git
   history keeps them.
 - **The hackathon entry is separate.** Anything built on 2026-11-14/15 lives in its own repository. If it
-  uses `@ground-truth/physics` or `@ground-truth/capture`, it pins them to commit `db56a70` and declares
-  them as pre-existing work.
+  uses `@ground-truth/physics` or `@ground-truth/capture`, it pins them to a commit of this repository (a
+  vendored copy or a git submodule; installing them by name from git has not been tested) and declares them
+  as pre-existing work.
 
 ## What the code does
 
 - **[`@ground-truth/physics`](packages/physics/README.md)** — pure TypeScript, no I/O. Mechanical work
   (positive, negative, net) and peak force from vertical position samples, with gravity and a constant
-  device force as inputs: `F = m·(g_env + a) + F_device`. Device models for the ISS exercise hardware
-  (the ARED resistive device, the cycle ergometer, a treadmill with harness load), and a daily skeletal load stimulus compared with the same session at 1 g.
+  device force as inputs: `F = m·(g_env + a) + F_device`. Simplified device models taken from
+  the brief: ARED work and a peak force calibrated to one published point; the CEVIS cycle-ergometer power
+  correction (not claimed for FERGO, the ergometer on the ISS today); a static treadmill force with harness
+  load. A daily load stimulus, `S = (Σ n·F⁴)^¼`, compared with the same day recomputed at 1 g.
 - **[`@ground-truth/capture`](packages/capture/README.md)** — pure TypeScript, no I/O. Turns a stream of
   wrist positions from a pose model into per-repetition work, peak force and range of motion, or refuses
   the recording with a stated reason (low frame rate, gaps, no complete repetition, and others).
 - **[`@ground-truth/demo`](packages/demo/README.md)** — a single local web page: the same day of exercise
-  under Earth, Moon, Mars and ISS gravity as two numbers (energy and load), and a capture view that measures
-  a lifting set from a camera or a video file.
+  under Earth, Moon, Mars and ISS gravity as two numbers (energy and load), and a capture view that estimates
+  the work and peak force of a lifting set from a camera or a video file (never run on a real person).
 
 ## What it does not do
 
@@ -64,9 +67,23 @@ Every number is an estimate with a stated source; nothing here measures the body
   minimum-jerk motion). `VALIDATED_ON_REAL_VIDEO` is `false`
   ([`packages/capture/src/session.ts`](packages/capture/src/session.ts)), which caps every camera result at
   `MEDIUM` confidence. The real-video checks listed in the capture README are open.
-- **No real device.** The camera was never opened on a real phone.
+- **No real person, no real device.** The pose model has never been run on a real person; the analysed
+  path ran only with a substituted detector. No camera has been opened on any device, and phone frame timing
+  is untested.
+- **No force reference.** Peak force has never been compared with a force sensor. On synthetic lifts, work
+  and range of motion are within about 1 % and peak force within 3–9 %; real pose noise will be worse.
 - **One constant is still unchecked.** The stature scale uses an eye-to-ankle fraction of 0.897
   ([`packages/capture/src/scale.ts`](packages/capture/src/scale.ts)), not yet checked against its source.
+- **Known limits of the model**, found in a review on 2026-11-13 and not yet fixed in the code:
+  - The wrist stands in for the load. In a dumbbell curl the weight travels about 1.2–1.3 times as far as the
+    wrist, so work and range read about 20 % low (peak force much less, since `m·g` dominates).
+  - The ISS running decrement (Genc 2010) was measured as in-shoe force on four crew using the devices in
+    service until 2008 (TVIS, iRED, CEVIS), not today's T2 treadmill and ARED.
+  - The ARED model holds the flywheel's effective mass constant, while its source says the inertial load
+    grows with the setting; its one calibration point is an extreme setting.
+  - A constant device force is an ideal, lossless force: it leaves out ARED's flywheel inertia and eccentric
+    loss.
+  - Results are point values; known errors are not yet reported as ranges.
 - **The brief is out of date.** It was written from the one-paragraph challenge summary and was not
   re-read against the full statement (2026-10-28) or the judging and submission guides (2026-11-13). Where
   the code found its numbers wrong, the package READMEs say so:
